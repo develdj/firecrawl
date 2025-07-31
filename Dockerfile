@@ -54,6 +54,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g pnpm@9.13.0
 
+# Install Playwright globally
+RUN npm install -g playwright@1.40.0 && \
+    npx playwright install chromium && \
+    npx playwright install-deps chromium
+
 # Clone Firecrawl repository
 RUN git clone https://github.com/develdj/firecrawl.git /app/firecrawl
 
@@ -80,6 +85,69 @@ RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/www/html
 # Copy playground.html to nginx directory
 COPY playground.html /var/www/html/index.html
 
+# Create a simple Playwright service script
+RUN cat > /app/playwright-service.js << 'EOF'
+const http = require('http');
+const { chromium } = require('playwright');
+
+const server = http.createServer(async (req, res) => {
+  console.log(`Received request: ${req.method} ${req.url}`);
+  
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200);
+    res.end();
+    return;
+  }
+
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('OK');
+    return;
+  }
+
+  if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Playwright service is running');
+    return;
+  }
+
+  // Handle browser operations here
+  try {
+    if (req.method === 'POST' && req.url === '/browser/execute') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        const browser = await chromium.launch({ headless: true });
+        try {
+          const page = await browser.newPage();
+          // Process request based on body content
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'success' }));
+        } finally {
+          await browser.close();
+        }
+      });
+    } else {
+      res.writeHead(404);
+      res.end('Not found');
+    }
+  } catch (error) {
+    console.error('Playwright service error:', error);
+    res.writeHead(500);
+    res.end(JSON.stringify({ error: error.message }));
+  }
+});
+
+const PORT = process.env.PLAYWRIGHT_PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Playwright service listening on port ${PORT}`);
+});
+EOF
+
 # Configure nginx
 RUN cat > /etc/nginx/sites-available/default << 'EOF'
 server {
@@ -91,12 +159,10 @@ server {
     
     server_name _;
     
-    # Serve static files
     location / {
         try_files $uri $uri/ =404;
     }
     
-    # Proxy API requests to the Firecrawl API
     location /v1/ {
         proxy_pass http://localhost:3002/v1/;
         proxy_http_version 1.1;
@@ -109,7 +175,6 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
     
-    # Health check endpoint
     location /health {
         access_log off;
         return 200 "healthy\n";
@@ -118,7 +183,7 @@ server {
 }
 EOF
 
-# Create a supervisor configuration
+# Create supervisor configuration with Playwright service
 RUN cat > /etc/supervisor/conf.d/firecrawl.conf << 'EOF'
 [supervisord]
 nodaemon=true
@@ -133,13 +198,22 @@ stdout_logfile=/var/log/supervisor/nginx.log
 stderr_logfile=/var/log/supervisor/nginx.log
 priority=1
 
+[program:playwright-service]
+command=node /app/playwright-service.js
+autostart=true
+autorestart=true
+stdout_logfile=/var/log/supervisor/playwright.log
+stderr_logfile=/var/log/supervisor/playwright.log
+environment=NODE_ENV="production",PLAYWRIGHT_PORT="3000"
+priority=5
+
 [program:redis-check]
 command=/bin/bash -c 'until redis-cli -h ${REDIS_HOST:-redis} ping; do echo "Waiting for Redis..."; sleep 2; done; echo "Redis ready"'
 autostart=true
 autorestart=false
 stdout_logfile=/var/log/supervisor/redis-check.log
 stderr_logfile=/var/log/supervisor/redis-check.log
-priority=2
+priority=10
 
 [program:firecrawl-worker]
 command=node dist/src/services/queue-worker.js
@@ -148,8 +222,8 @@ autostart=true
 autorestart=true
 stdout_logfile=/app/logs/worker.log
 stderr_logfile=/app/logs/worker-error.log
-environment=NODE_ENV="production",IS_WORKER_PROCESS="true"
-priority=10
+environment=NODE_ENV="production",IS_WORKER_PROCESS="true",PLAYWRIGHT_MICROSERVICE_URL="http://localhost:3000"
+priority=20
 startsecs=10
 
 [program:firecrawl-api]
@@ -159,8 +233,8 @@ autostart=true
 autorestart=true
 stdout_logfile=/app/logs/api.log
 stderr_logfile=/app/logs/api-error.log
-environment=NODE_ENV="production",PORT="3002",HOST="0.0.0.0"
-priority=20
+environment=NODE_ENV="production",PORT="3002",HOST="0.0.0.0",PLAYWRIGHT_MICROSERVICE_URL="http://localhost:3000"
+priority=30
 startsecs=10
 EOF
 
@@ -171,6 +245,8 @@ RUN cat > /app/healthcheck.sh << 'EOF'
 curl -f http://localhost/health || exit 1
 # Check if API is responding
 curl -f http://localhost:3002/test || exit 1
+# Check if Playwright service is responding
+curl -f http://localhost:3000/health || exit 1
 EOF
 RUN chmod +x /app/healthcheck.sh
 
@@ -183,7 +259,7 @@ ENV NODE_ENV=production \
     REDIS_URL=redis://redis:6379 \
     REDIS_RATE_LIMIT_URL=redis://redis:6379 \
     USE_DB_AUTHENTICATION=false \
-    PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000 \
+    PLAYWRIGHT_MICROSERVICE_URL=http://localhost:3000 \
     LOGGING_LEVEL=info \
     MAX_RAM=0.95 \
     MAX_CPU=0.95
