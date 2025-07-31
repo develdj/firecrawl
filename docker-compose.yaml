@@ -1,102 +1,126 @@
-name: firecrawl
-
-x-common-service: &common-service
-  # NOTE: If you don't want to build the service locally,
-  # uncomment the build: statement and comment out the image: statement
-  # image: ghcr.io/mendableai/firecrawl
-  build: apps/api
-
-  ulimits:
-    nofile:
-      soft: 65535
-      hard: 65535
-  networks:
-    - backend
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-
-x-common-env: &common-env
-  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-  REDIS_RATE_LIMIT_URL: ${REDIS_URL:-redis://redis:6379}
-  PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
-  USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION}
-  OPENAI_API_KEY: ${OPENAI_API_KEY}
-  OPENAI_BASE_URL: ${OPENAI_BASE_URL}
-  MODEL_NAME: ${MODEL_NAME}
-  MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME} 
-  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL} 
-  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
-  BULL_AUTH_KEY: ${BULL_AUTH_KEY}
-  TEST_API_KEY: ${TEST_API_KEY}
-  POSTHOG_API_KEY: ${POSTHOG_API_KEY}
-  POSTHOG_HOST: ${POSTHOG_HOST}
-  SUPABASE_ANON_TOKEN: ${SUPABASE_ANON_TOKEN}
-  SUPABASE_URL: ${SUPABASE_URL}
-  SUPABASE_SERVICE_TOKEN: ${SUPABASE_SERVICE_TOKEN}
-  SELF_HOSTED_WEBHOOK_URL: ${SELF_HOSTED_WEBHOOK_URL}
-  SERPER_API_KEY: ${SERPER_API_KEY}
-  SEARCHAPI_API_KEY: ${SEARCHAPI_API_KEY}
-  LOGGING_LEVEL: ${LOGGING_LEVEL}
-  PROXY_SERVER: ${PROXY_SERVER}
-  PROXY_USERNAME: ${PROXY_USERNAME}
-  PROXY_PASSWORD: ${PROXY_PASSWORD}
-  SEARXNG_ENDPOINT: ${SEARXNG_ENDPOINT}
-  SEARXNG_ENGINES: ${SEARXNG_ENGINES}
-  SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES}
-
 services:
-  playwright-service:
-    # NOTE: If you don't want to build the service locally,
-    # uncomment the build: statement and comment out the image: statement
-    # image: ghcr.io/mendableai/playwright-service:latest
-    build: apps/playwright-service-ts
-    environment:
-      PORT: 3000
-      PROXY_SERVER: ${PROXY_SERVER}
-      PROXY_USERNAME: ${PROXY_USERNAME}
-      PROXY_PASSWORD: ${PROXY_PASSWORD}
-      BLOCK_MEDIA: ${BLOCK_MEDIA}
-    networks:
-      - backend
-
-  api:
-    <<: *common-service
-    environment:
-      <<: *common-env
-      HOST: "0.0.0.0"
-      PORT: ${INTERNAL_PORT:-3002}
-      FLY_PROCESS_GROUP: app
-      ENV: local
-    depends_on:
-      - redis
-      - playwright-service
-    ports:
-      - "${PORT:-3002}:${INTERNAL_PORT:-3002}"
-    command: [ "pnpm", "run", "start:production" ]
-
-  worker:
-    <<: *common-service
-    environment:
-      <<: *common-env
-      FLY_PROCESS_GROUP: worker
-      ENV: local
-    depends_on:
-      - redis
-      - playwright-service
-      - api
-    command: [ "pnpm", "run", "workers" ]
-
+  # Redis service for queue management
   redis:
-    # NOTE: If you want to use Valkey (open source) instead of Redis (source available),
-    # uncomment the Valkey statement and comment out the Redis statement.
-    # Using Valkey with Firecrawl is untested and not guaranteed to work. Use with caution.
-    image: redis:alpine
-    # image: valkey/valkey:alpine
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 512mb --maxmemory-policy noeviction --save ""
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "coolify.managed=true"
 
-    networks:
-      - backend
-    command: redis-server --bind 0.0.0.0
+  # Playwright service for browser automation
+  playwright-service:
+    image: ghcr.io/browserless/chromium:latest
+    restart: unless-stopped
+    platform: linux/arm64
+    environment:
+      - TIMEOUT=60000
+      - CONCURRENT=3
+      - QUEUED=10
+      - CORS=true
+      - TOKEN=firecrawl-secret
+      - EXIT_ON_HEALTH_FAILURE=true
+      - PRE_REQUEST_HEALTH_CHECK=true
+    ports:
+      - "3050:3000"
+    labels:
+      - "coolify.managed=true"
 
-networks:
-  backend:
-    driver: bridge
+  # Firecrawl main service (API + Workers combined)
+  firecrawl:
+    image: firecrawl-jetson:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      playwright-service:
+        condition: service_started
+    environment:
+      # Core configuration
+      - NODE_ENV=production
+      - PORT=3002
+      - HOST=0.0.0.0
+      - NUM_WORKERS_PER_QUEUE=8
+      
+      # Redis configuration
+      - REDIS_HOST=redis
+      - REDIS_URL=redis://redis:6379
+      - REDIS_RATE_LIMIT_URL=redis://redis:6379
+      
+      # Playwright configuration
+      - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000
+      - PLAYWRIGHT_MICROSERVICE_TOKEN=firecrawl-secret
+      
+      # Authentication
+      - USE_DB_AUTHENTICATION=${USE_DB_AUTHENTICATION:-false}
+      - TEST_API_KEY=${TEST_API_KEY:-test-api-key-jetson}
+      
+      # Optional: Supabase configuration
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_ANON_TOKEN=${SUPABASE_ANON_TOKEN:-}
+      - SUPABASE_SERVICE_TOKEN=${SUPABASE_SERVICE_TOKEN:-}
+      
+      # LLM configuration (using local Ollama)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://host.docker.internal:11434/v1}
+      - LLM_MODEL=${LLM_MODEL:-llama3.2}
+      
+      # Search configuration (using local SearXNG)
+      - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:8888}
+      - GOOGLE_SEARCH_ENGINE_ID=${GOOGLE_SEARCH_ENGINE_ID:-}
+      - GOOGLE_SEARCH_API_KEY=${GOOGLE_SEARCH_API_KEY:-}
+      
+      # Performance tuning
+      - MAX_RAM=0.90
+      - MAX_CPU=0.90
+      - LOGGING_LEVEL=${LOGGING_LEVEL:-info}
+      
+      # Optional features
+      - LLAMAPARSE_API_KEY=${LLAMAPARSE_API_KEY:-}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - SELF_HOSTED_WEBHOOK_URL=${SELF_HOSTED_WEBHOOK_URL:-}
+      
+      # Bull Auth
+      - BULL_AUTH_KEY=${BULL_AUTH_KEY:-}
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    labels:
+      - "coolify.managed=true"
+      - "coolify.type=application"
+      - "coolify.name=firecrawl"
+      - "coolify.description=Self-hosted Firecrawl for web scraping"
+
+  # Bull Dashboard for queue monitoring
+  bull-dashboard:
+    image: ghcr.io/felixmosh/bull-board:latest
+    restart: unless-stopped
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+    ports:
+      - "3003:3000"
+    depends_on:
+      - redis
+    labels:
+      - "coolify.managed=true"
+      - "coolify.type=application"
+      - "coolify.name=bull-dashboard"
+
+volumes:
+  redis-data:
+    driver: local
