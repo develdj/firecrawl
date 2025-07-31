@@ -22,10 +22,12 @@ services:
     ports:
       - "3002:3002"  # API access
       - "3004:80"    # Nginx playground UI
+      - "3005:3005"  # Worker service
     environment:
       - NODE_ENV=production
       - PORT=3002
       - HOST=0.0.0.0
+      - WORKER_PORT=3005
       - NUM_WORKERS_PER_QUEUE=8
       - REDIS_HOST=redis
       - REDIS_URL=redis://redis:6379
