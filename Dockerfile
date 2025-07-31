@@ -4,7 +4,7 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including nginx
+# Install system dependencies including nginx and chromium
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -47,6 +47,8 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     supervisor \
     nginx \
+    # Install chromium browser for ARM64
+    chromium-browser \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20.x and pnpm
@@ -54,10 +56,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g pnpm@9.13.0
 
-# Install Playwright globally
-RUN npm install -g playwright@1.40.0 && \
-    npx playwright install chromium && \
-    npx playwright install-deps chromium
+# Install Puppeteer (better ARM64 support than Playwright)
+RUN npm install -g puppeteer@21.0.0
 
 # Clone Firecrawl repository
 RUN git clone https://github.com/develdj/firecrawl.git /app/firecrawl
@@ -85,10 +85,10 @@ RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/www/html
 # Copy playground.html to nginx directory
 COPY playground.html /var/www/html/index.html
 
-# Create a simple Playwright service script
-RUN cat > /app/playwright-service.js << 'EOF'
+# Create a Puppeteer-based browser service
+RUN cat > /app/browser-service.js << 'EOF'
 const http = require('http');
-const { chromium } = require('playwright');
+const puppeteer = require('puppeteer');
 
 const server = http.createServer(async (req, res) => {
   console.log(`Received request: ${req.method} ${req.url}`);
@@ -111,17 +111,29 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Playwright service is running');
+    res.end('Browser service is running (Puppeteer/Chromium)');
     return;
   }
 
-  // Handle browser operations here
+  // Handle browser operations
   try {
     if (req.method === 'POST' && req.url === '/browser/execute') {
       let body = '';
       req.on('data', chunk => body += chunk);
       req.on('end', async () => {
-        const browser = await chromium.launch({ headless: true });
+        const browser = await puppeteer.launch({
+          headless: true,
+          executablePath: '/usr/bin/chromium-browser',
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process'
+          ]
+        });
         try {
           const page = await browser.newPage();
           // Process request based on body content
@@ -136,7 +148,7 @@ const server = http.createServer(async (req, res) => {
       res.end('Not found');
     }
   } catch (error) {
-    console.error('Playwright service error:', error);
+    console.error('Browser service error:', error);
     res.writeHead(500);
     res.end(JSON.stringify({ error: error.message }));
   }
@@ -144,7 +156,7 @@ const server = http.createServer(async (req, res) => {
 
 const PORT = process.env.PLAYWRIGHT_PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Playwright service listening on port ${PORT}`);
+  console.log(`Browser service (Puppeteer) listening on port ${PORT}`);
 });
 EOF
 
@@ -183,7 +195,7 @@ server {
 }
 EOF
 
-# Create supervisor configuration with Playwright service
+# Create supervisor configuration
 RUN cat > /etc/supervisor/conf.d/firecrawl.conf << 'EOF'
 [supervisord]
 nodaemon=true
@@ -198,13 +210,13 @@ stdout_logfile=/var/log/supervisor/nginx.log
 stderr_logfile=/var/log/supervisor/nginx.log
 priority=1
 
-[program:playwright-service]
-command=node /app/playwright-service.js
+[program:browser-service]
+command=node /app/browser-service.js
 autostart=true
 autorestart=true
-stdout_logfile=/var/log/supervisor/playwright.log
-stderr_logfile=/var/log/supervisor/playwright.log
-environment=NODE_ENV="production",PLAYWRIGHT_PORT="3000"
+stdout_logfile=/var/log/supervisor/browser.log
+stderr_logfile=/var/log/supervisor/browser.log
+environment=NODE_ENV="production",PLAYWRIGHT_PORT="3000",PUPPETEER_SKIP_CHROMIUM_DOWNLOAD="true"
 priority=5
 
 [program:redis-check]
@@ -245,7 +257,7 @@ RUN cat > /app/healthcheck.sh << 'EOF'
 curl -f http://localhost/health || exit 1
 # Check if API is responding
 curl -f http://localhost:3002/test || exit 1
-# Check if Playwright service is responding
+# Check if Browser service is responding
 curl -f http://localhost:3000/health || exit 1
 EOF
 RUN chmod +x /app/healthcheck.sh
@@ -262,7 +274,9 @@ ENV NODE_ENV=production \
     PLAYWRIGHT_MICROSERVICE_URL=http://localhost:3000 \
     LOGGING_LEVEL=info \
     MAX_RAM=0.95 \
-    MAX_CPU=0.95
+    MAX_CPU=0.95 \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Expose ports
 EXPOSE 80 3002
