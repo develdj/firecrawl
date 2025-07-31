@@ -4,7 +4,7 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including nginx
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -46,6 +46,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     xdg-utils \
     supervisor \
+    nginx \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20.x and pnpm
@@ -74,7 +75,48 @@ RUN pip install --no-cache-dir \
     openai langchain pydantic httpx python-dotenv
 
 # Create necessary directories
-RUN mkdir -p /app/logs /app/data /var/log/supervisor
+RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/www/html
+
+# Copy playground.html to nginx directory
+COPY playground.html /var/www/html/index.html
+
+# Configure nginx
+RUN cat > /etc/nginx/sites-available/default << 'EOF'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    
+    root /var/www/html;
+    index index.html;
+    
+    server_name _;
+    
+    # Serve static files
+    location / {
+        try_files $uri $uri/ =404;
+    }
+    
+    # Proxy API requests to the Firecrawl API
+    location /v1/ {
+        proxy_pass http://localhost:3002/v1/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Health check endpoint
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}
+EOF
 
 # Create a supervisor configuration
 RUN cat > /etc/supervisor/conf.d/firecrawl.conf << 'EOF'
@@ -83,13 +125,21 @@ nodaemon=true
 logfile=/var/log/supervisor/supervisord.log
 pidfile=/var/run/supervisord.pid
 
+[program:nginx]
+command=/usr/sbin/nginx -g "daemon off;"
+autostart=true
+autorestart=true
+stdout_logfile=/var/log/supervisor/nginx.log
+stderr_logfile=/var/log/supervisor/nginx.log
+priority=1
+
 [program:redis-check]
 command=/bin/bash -c 'until redis-cli -h ${REDIS_HOST:-redis} ping; do echo "Waiting for Redis..."; sleep 2; done; echo "Redis ready"'
 autostart=true
 autorestart=false
 stdout_logfile=/var/log/supervisor/redis-check.log
 stderr_logfile=/var/log/supervisor/redis-check.log
-priority=1
+priority=2
 
 [program:firecrawl-worker]
 command=node dist/src/services/queue-worker.js
@@ -117,6 +167,8 @@ EOF
 # Create a health check script
 RUN cat > /app/healthcheck.sh << 'EOF'
 #!/bin/bash
+# Check if nginx is responding
+curl -f http://localhost/health || exit 1
 # Check if API is responding
 curl -f http://localhost:3002/test || exit 1
 EOF
@@ -136,12 +188,12 @@ ENV NODE_ENV=production \
     MAX_RAM=0.95 \
     MAX_CPU=0.95
 
-# Expose port
-EXPOSE 3002
+# Expose ports
+EXPOSE 80 3002
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD /app/healthcheck.sh
 
-# Use supervisor to manage both processes
+# Use supervisor to manage all processes
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
