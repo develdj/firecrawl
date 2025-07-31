@@ -159,25 +159,25 @@ services:
       start_period: 60s
 
   # Bull Board - Queue monitoring dashboard (Optional)
-  bull-board:
-    image: deadly0/bull-board:latest
-    environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #bull-board:
+  #  image: deadly0/bull-board:latest
+  #  environment:
+  #    REDIS_HOST: redis
+  #    REDIS_PORT: 6379
+  #    REDIS_PASSWORD: ${REDIS_PASSWORD}
       # If you want to add authentication to Bull Board
       # USERNAME: ${BULL_BOARD_USERNAME:-admin}
       # PASSWORD: ${BULL_BOARD_PASSWORD:-admin}
-    ports:
-      - "${BULL_BOARD_PORT:-3003}:3000"
-    networks:
-      - backend
-    depends_on:
-      - redis
-    restart: unless-stopped
-    labels:
-      - "firecrawl.service=monitoring"
-      - "firecrawl.description=Queue monitoring dashboard"
+  #  ports:
+  #    - "${BULL_BOARD_PORT:-3003}:3000"
+  #  networks:
+  #    - backend
+  #  depends_on:
+  #    - redis
+  #  restart: unless-stopped
+  #  labels:
+  #    - "firecrawl.service=monitoring"
+  #    - "firecrawl.description=Queue monitoring dashboard"
 
   # Firecrawl Playground UI (Optional - uncomment to use)
   # playground:
