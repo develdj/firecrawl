@@ -13,14 +13,15 @@ services:
       retries: 5
       start_period: 30s
 
-  # Firecrawl with integrated Playwright, nginx, and API
+  # Firecrawl with all services integrated
   firecrawl:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "80:80"       # 👈 NGINX serves here! (playground UI + API proxy)
+      - "3002:3002"  # API access
+      - "3004:80"    # Nginx playground UI
     environment:
       - NODE_ENV=production
       - PORT=3002
@@ -30,11 +31,10 @@ services:
       - REDIS_URL=redis://redis:6379
       - REDIS_RATE_LIMIT_URL=redis://redis:6379
       - USE_DB_AUTHENTICATION=false
-      - PLAYWRIGHT_MICROSERVICE_URL=http://localhost:3000
+      - PLAYWRIGHT_MICROSERVICE_URL=http://localhost:3000  # Internal playwright
       - LOGGING_LEVEL=info
       - MAX_RAM=0.95
       - MAX_CPU=0.95
-      # Add your API keys here if needed
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
@@ -52,11 +52,12 @@ services:
       retries: 5
       start_period: 90s
 
+  # Bull Dashboard on port 3003
   bull-dashboard:
     image: deadly0/bull-board:latest
     restart: unless-stopped
     ports:
-      - "3333:3000"
+      - "3003:3000"  # Bull dashboard access
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
