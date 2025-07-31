@@ -4,8 +4,6 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -13,13 +11,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
 
   playwright-service:
     image: mcr.microsoft.com/playwright:v1.40.0-jammy
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -28,8 +23,6 @@ services:
         npx playwright install chromium &&
         node -e \"
           const http = require('http');
-          const { chromium } = require('playwright');
-          
           const server = http.createServer(async (req, res) => {
             if (req.url === '/health') {
               res.writeHead(200);
@@ -39,7 +32,6 @@ services:
             res.writeHead(200);
             res.end('Playwright service ready');
           });
-          
           server.listen(3000, '0.0.0.0', () => {
             console.log('Playwright service listening on port 3000');
           });
@@ -52,14 +44,12 @@ services:
       retries: 10
       start_period: 60s
 
+  # Firecrawl API only (no nginx)
   firecrawl:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.api  # Use original Dockerfile without nginx
     restart: unless-stopped
-    ports:
-      - "80:80"       # Nginx serving playground
-      - "3002:3002"   # API port (optional, can remove if only using nginx)
     environment:
       - NODE_ENV=production
       - PORT=3002
@@ -71,12 +61,6 @@ services:
       - USE_DB_AUTHENTICATION=false
       - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000
       - LOGGING_LEVEL=info
-      - MAX_RAM=0.95
-      - MAX_CPU=0.95
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - LLAMAPARSE_API_KEY=${LLAMAPARSE_API_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -85,12 +69,18 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
-    healthcheck:
-      test: ["CMD", "/app/healthcheck.sh"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 90s
+
+  # Separate nginx service
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./playground.html:/usr/share/nginx/html/index.html:ro
+    depends_on:
+      - firecrawl
 
   bull-dashboard:
     image: deadly0/bull-board:latest
@@ -100,7 +90,6 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=
     depends_on:
       - redis
 
