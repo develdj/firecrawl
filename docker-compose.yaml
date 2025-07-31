@@ -13,7 +13,7 @@ services:
       retries: 5
       start_period: 30s
 
-  # Firecrawl with all services integrated
+  # Firecrawl with ALL services integrated (including Bull Dashboard)
   firecrawl:
     build:
       context: .
@@ -21,6 +21,7 @@ services:
     restart: unless-stopped
     ports:
       - "3002:3002"  # API access
+      - "3003:3003"  # Bull Dashboard (integrated)
       - "3004:80"    # Nginx playground UI
       - "3005:3005"  # Worker service
     environment:
@@ -37,6 +38,7 @@ services:
       - LOGGING_LEVEL=info
       - MAX_RAM=0.95
       - MAX_CPU=0.95
+      # Add your API keys here if needed
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
@@ -53,21 +55,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 90s
-
-  # Bull Dashboard built for ARM64
-  bull-dashboard:
-    build:
-      context: .
-      dockerfile: Dockerfile.bull
-    restart: unless-stopped
-    ports:
-      - "3003:3000"
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=
-    depends_on:
-      - redis
 
 volumes:
   redis_data:
