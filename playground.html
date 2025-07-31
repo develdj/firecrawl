@@ -128,11 +128,25 @@
             width: auto;
             margin-right: 5px;
         }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 10px;
+            background: #ccc;
+        }
+        .status-indicator.online {
+            background: #4caf50;
+        }
+        .status-indicator.offline {
+            background: #f44336;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔥 Firecrawl Local Playground</h1>
+        <h1>🔥 Firecrawl Local Playground <span class="status-indicator" id="status"></span></h1>
         
         <div class="tabs">
             <div class="tab active" onclick="switchTab('scrape')">Scrape</div>
@@ -144,7 +158,7 @@
         <div id="scrape-tab" class="tab-content active">
             <div class="input-group">
                 <label for="scrape-url">URL to Scrape:</label>
-                <input type="url" id="scrape-url" placeholder="https://example.com" value="http://www.ausiliari-tessili.com">
+                <input type="url" id="scrape-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
             </div>
 
             <div class="input-group">
@@ -175,7 +189,7 @@
         <div id="crawl-tab" class="tab-content">
             <div class="input-group">
                 <label for="crawl-url">URL to Crawl:</label>
-                <input type="url" id="crawl-url" placeholder="https://example.com" value="http://www.ausiliari-tessili.com">
+                <input type="url" id="crawl-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
             </div>
 
             <div class="input-group">
@@ -196,7 +210,7 @@
         <div id="map-tab" class="tab-content">
             <div class="input-group">
                 <label for="map-url">URL to Map:</label>
-                <input type="url" id="map-url" placeholder="https://example.com" value="http://www.ausiliari-tessili.com">
+                <input type="url" id="map-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
             </div>
 
             <button onclick="mapUrl()">Map Website</button>
@@ -210,8 +224,31 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:3002';
+        // API base URL - when served through nginx, API calls go through the same host
+        const API_BASE = '';
         let currentCrawlId = null;
+
+        // Check API status on load
+        async function checkApiStatus() {
+            try {
+                const response = await fetch('/v1/test');
+                const statusEl = document.getElementById('status');
+                if (response.ok) {
+                    statusEl.classList.add('online');
+                    statusEl.title = 'API is online';
+                } else {
+                    statusEl.classList.add('offline');
+                    statusEl.title = 'API is offline';
+                }
+            } catch (error) {
+                const statusEl = document.getElementById('status');
+                statusEl.classList.add('offline');
+                statusEl.title = 'API is offline';
+            }
+        }
+
+        // Check status on page load
+        window.addEventListener('load', checkApiStatus);
 
         // Show/hide extract options when checkbox is toggled
         document.getElementById('format-extract').addEventListener('change', function() {
@@ -232,6 +269,11 @@
             const url = document.getElementById('scrape-url').value;
             const timeout = parseInt(document.getElementById('timeout').value);
             
+            if (!url) {
+                showError('Please enter a URL to scrape');
+                return;
+            }
+
             // Get selected formats
             const formats = [];
             if (document.getElementById('format-markdown').checked) formats.push('markdown');
@@ -239,6 +281,11 @@
             if (document.getElementById('format-rawHtml').checked) formats.push('rawHtml');
             if (document.getElementById('format-extract').checked) formats.push('extract');
             if (document.getElementById('format-screenshot').checked) formats.push('screenshot');
+
+            if (formats.length === 0) {
+                showError('Please select at least one format');
+                return;
+            }
 
             const body = {
                 url,
@@ -261,6 +308,11 @@
             const limit = parseInt(document.getElementById('crawl-limit').value);
             const maxDepth = parseInt(document.getElementById('max-depth').value);
 
+            if (!url) {
+                showError('Please enter a URL to crawl');
+                return;
+            }
+
             const body = {
                 url,
                 limit,
@@ -282,6 +334,12 @@
 
         async function mapUrl() {
             const url = document.getElementById('map-url').value;
+            
+            if (!url) {
+                showError('Please enter a URL to map');
+                return;
+            }
+            
             await makeRequest('/v1/map', { url });
         }
 
@@ -333,6 +391,13 @@
             const resultContent = document.getElementById('result-content');
             resultDiv.style.display = 'block';
             resultContent.textContent = JSON.stringify(data, null, 2);
+        }
+
+        function showError(message) {
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('result-content');
+            resultDiv.style.display = 'block';
+            resultContent.innerHTML = `<div class="error">${message}</div>`;
         }
     </script>
 </body>
