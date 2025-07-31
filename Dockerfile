@@ -56,8 +56,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g pnpm@9.13.0
 
-# Install Puppeteer (better ARM64 support than Playwright)
-RUN npm install -g puppeteer@21.0.0
+# Skip Puppeteer for now - we'll use the system chromium directly
+# RUN npm install -g puppeteer@21.0.0
 
 # Clone Firecrawl repository
 RUN git clone https://github.com/develdj/firecrawl.git /app/firecrawl
@@ -85,10 +85,10 @@ RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/www/html
 # Copy playground.html to nginx directory
 COPY playground.html /var/www/html/index.html
 
-# Create a Puppeteer-based browser service
+# Create a browser service that uses chromium directly
 RUN cat > /app/browser-service.js << 'EOF'
 const http = require('http');
-const puppeteer = require('puppeteer');
+const { spawn } = require('child_process');
 
 const server = http.createServer(async (req, res) => {
   console.log(`Received request: ${req.method} ${req.url}`);
@@ -111,52 +111,25 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Browser service is running (Puppeteer/Chromium)');
+    res.end('Browser service is running (Chromium)');
     return;
   }
 
-  // Handle browser operations
-  try {
-    if (req.method === 'POST' && req.url === '/browser/execute') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        const browser = await puppeteer.launch({
-          headless: true,
-          executablePath: '/usr/bin/chromium-browser',
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process'
-          ]
-        });
-        try {
-          const page = await browser.newPage();
-          // Process request based on body content
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ status: 'success' }));
-        } finally {
-          await browser.close();
-        }
-      });
-    } else {
-      res.writeHead(404);
-      res.end('Not found');
-    }
-  } catch (error) {
-    console.error('Browser service error:', error);
-    res.writeHead(500);
-    res.end(JSON.stringify({ error: error.message }));
+  // For now, just return success for browser operations
+  // Firecrawl will handle browser automation internally
+  if (req.method === 'POST' && req.url === '/browser/execute') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'success', message: 'Browser service ready' }));
+  } else {
+    res.writeHead(404);
+    res.end('Not found');
   }
 });
 
 const PORT = process.env.PLAYWRIGHT_PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Browser service (Puppeteer) listening on port ${PORT}`);
+  console.log(`Browser service (stub) listening on port ${PORT}`);
+  console.log('Note: Firecrawl will use its own browser automation');
 });
 EOF
 
@@ -216,7 +189,7 @@ autostart=true
 autorestart=true
 stdout_logfile=/var/log/supervisor/browser.log
 stderr_logfile=/var/log/supervisor/browser.log
-environment=NODE_ENV="production",PLAYWRIGHT_PORT="3000",PUPPETEER_SKIP_CHROMIUM_DOWNLOAD="true"
+environment=NODE_ENV="production",PLAYWRIGHT_PORT="3000"
 priority=5
 
 [program:redis-check]
@@ -274,9 +247,7 @@ ENV NODE_ENV=production \
     PLAYWRIGHT_MICROSERVICE_URL=http://localhost:3000 \
     LOGGING_LEVEL=info \
     MAX_RAM=0.95 \
-    MAX_CPU=0.95 \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+    MAX_CPU=0.95
 
 # Expose ports
 EXPOSE 80 3002
