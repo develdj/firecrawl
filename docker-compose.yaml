@@ -2,10 +2,9 @@ name: firecrawl
 
 x-common-service: &common-service
   # NOTE: If you don't want to build the service locally,
-  # uncomment the build: statement and comment out the image: statement
-  # image: ghcr.io/mendableai/firecrawl
+  # uncomment the image: statement and comment out the build: statement
+  # image: ghcr.io/mendableai/firecrawl:latest
   build: apps/api
-
   ulimits:
     nofile:
       soft: 65535
@@ -14,40 +13,84 @@ x-common-service: &common-service
     - backend
   extra_hosts:
     - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 x-common-env: &common-env
+  # Redis Configuration
   REDIS_URL: ${REDIS_URL:-redis://redis:6379}
   REDIS_RATE_LIMIT_URL: ${REDIS_URL:-redis://redis:6379}
+  
+  # Playwright Configuration
   PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
-  USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION}
+  
+  # Authentication
+  USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION:-false}
+  BULL_AUTH_KEY: ${BULL_AUTH_KEY}
+  TEST_API_KEY: ${TEST_API_KEY}
+  
+  # LLM Configuration (Ollama/OpenAI)
   OPENAI_API_KEY: ${OPENAI_API_KEY}
   OPENAI_BASE_URL: ${OPENAI_BASE_URL}
   MODEL_NAME: ${MODEL_NAME}
-  MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME} 
-  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL} 
-  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
-  BULL_AUTH_KEY: ${BULL_AUTH_KEY}
-  TEST_API_KEY: ${TEST_API_KEY}
+  MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+  
+  # Analytics & Monitoring
   POSTHOG_API_KEY: ${POSTHOG_API_KEY}
   POSTHOG_HOST: ${POSTHOG_HOST}
+  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+  
+  # Supabase Configuration
   SUPABASE_ANON_TOKEN: ${SUPABASE_ANON_TOKEN}
   SUPABASE_URL: ${SUPABASE_URL}
   SUPABASE_SERVICE_TOKEN: ${SUPABASE_SERVICE_TOKEN}
-  SELF_HOSTED_WEBHOOK_URL: ${SELF_HOSTED_WEBHOOK_URL}
+  
+  # Search Configuration
   SERPER_API_KEY: ${SERPER_API_KEY}
   SEARCHAPI_API_KEY: ${SEARCHAPI_API_KEY}
-  LOGGING_LEVEL: ${LOGGING_LEVEL}
-  PROXY_SERVER: ${PROXY_SERVER}
-  PROXY_USERNAME: ${PROXY_USERNAME}
-  PROXY_PASSWORD: ${PROXY_PASSWORD}
   SEARXNG_ENDPOINT: ${SEARXNG_ENDPOINT}
   SEARXNG_ENGINES: ${SEARXNG_ENGINES}
   SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES}
+  
+  # Proxy Configuration
+  PROXY_SERVER: ${PROXY_SERVER}
+  PROXY_USERNAME: ${PROXY_USERNAME}
+  PROXY_PASSWORD: ${PROXY_PASSWORD}
+  
+  # Other Configuration
+  SELF_HOSTED_WEBHOOK_URL: ${SELF_HOSTED_WEBHOOK_URL}
+  LOGGING_LEVEL: ${LOGGING_LEVEL:-info}
+  
+  # Timeout Configuration
+  SCRAPE_TIMEOUT: ${SCRAPE_TIMEOUT:-120000}
+  REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-120000}
+  BULL_JOB_TIMEOUT: ${BULL_JOB_TIMEOUT:-300000}
 
 services:
+  # Redis - Data store and queue backend
+  redis:
+    image: redis:alpine
+    # image: valkey/valkey:alpine  # Alternative: Valkey (Redis fork)
+    networks:
+      - backend
+    command: redis-server --bind 0.0.0.0 --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Playwright Service - Browser automation
   playwright-service:
-    # NOTE: If you don't want to build the service locally,
-    # uncomment the build: statement and comment out the image: statement
     # image: ghcr.io/mendableai/playwright-service:latest
     build: apps/playwright-service-ts
     environment:
@@ -55,10 +98,19 @@ services:
       PROXY_SERVER: ${PROXY_SERVER}
       PROXY_USERNAME: ${PROXY_USERNAME}
       PROXY_PASSWORD: ${PROXY_PASSWORD}
-      BLOCK_MEDIA: ${BLOCK_MEDIA}
+      BLOCK_MEDIA: ${BLOCK_MEDIA:-true}
+      PLAYWRIGHT_TIMEOUT: ${PLAYWRIGHT_TIMEOUT:-60000}
     networks:
       - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
+  # API Service - Main REST API
   api:
     <<: *common-service
     environment:
@@ -67,36 +119,99 @@ services:
       PORT: ${INTERNAL_PORT:-3002}
       FLY_PROCESS_GROUP: app
       ENV: local
+      NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
     depends_on:
-      - redis
-      - playwright-service
+      redis:
+        condition: service_healthy
+      playwright-service:
+        condition: service_healthy
     ports:
       - "${PORT:-3002}:${INTERNAL_PORT:-3002}"
-    command: [ "pnpm", "run", "start:production" ]
+    command: ["pnpm", "run", "start:production"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${INTERNAL_PORT:-3002}/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
+  # Worker Service - Background job processor
   worker:
     <<: *common-service
     environment:
       <<: *common-env
       FLY_PROCESS_GROUP: worker
       ENV: local
+      NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
     depends_on:
-      - redis
-      - playwright-service
-      - api
-    command: [ "pnpm", "run", "workers" ]
+      redis:
+        condition: service_healthy
+      playwright-service:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["pnpm", "run", "workers"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-  redis:
-    # NOTE: If you want to use Valkey (open source) instead of Redis (source available),
-    # uncomment the Valkey statement and comment out the Redis statement.
-    # Using Valkey with Firecrawl is untested and not guaranteed to work. Use with caution.
-    image: redis:alpine
-    # image: valkey/valkey:alpine
-
+  # Bull Board - Queue monitoring dashboard (Optional)
+  bull-board:
+    image: deadly0/bull-board:latest
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # If you want to add authentication to Bull Board
+      # USERNAME: ${BULL_BOARD_USERNAME:-admin}
+      # PASSWORD: ${BULL_BOARD_PASSWORD:-admin}
+    ports:
+      - "${BULL_BOARD_PORT:-3003}:3000"
     networks:
       - backend
-    command: redis-server --bind 0.0.0.0
+    depends_on:
+      - redis
+    restart: unless-stopped
+    labels:
+      - "firecrawl.service=monitoring"
+      - "firecrawl.description=Queue monitoring dashboard"
+
+  # Firecrawl Playground UI (Optional - uncomment to use)
+  # playground:
+  #   image: nginx:alpine
+  #   volumes:
+  #     - ./playground.html:/usr/share/nginx/html/index.html:ro
+  #   ports:
+  #     - "${PLAYGROUND_PORT:-3004}:80"
+  #   networks:
+  #     - backend
+  #   restart: unless-stopped
+  #   labels:
+  #     - "firecrawl.service=playground"
+  #     - "firecrawl.description=Local testing interface"
+
+  # Ollama Proxy (Optional - for better Docker networking with Ollama)
+  # Uncomment if you have issues connecting to Ollama from containers
+  # ollama-proxy:
+  #   image: alpine/socat:latest
+  #   command: TCP-LISTEN:11434,fork TCP-CONNECT:host.docker.internal:11434
+  #   networks:
+  #     - backend
+  #   restart: unless-stopped
+  #   labels:
+  #     - "firecrawl.service=proxy"
+  #     - "firecrawl.description=Ollama connection proxy"
 
 networks:
   backend:
     driver: bridge
+
+volumes:
+  redis-data:
+    driver: local
+    labels:
+      - "firecrawl.volume=redis"
+      - "firecrawl.description=Redis persistent data"
