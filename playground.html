@@ -23,6 +23,18 @@
             border-bottom: 2px solid #ff6b6b;
             padding-bottom: 10px;
         }
+        .port-info {
+            background: #e8f4f8;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .port-info code {
+            background: #d1e7dd;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
         .input-group {
             margin-bottom: 20px;
         }
@@ -148,6 +160,13 @@
     <div class="container">
         <h1>🔥 Firecrawl Local Playground <span class="status-indicator" id="status"></span></h1>
         
+        <div class="port-info">
+            <strong>Service Ports:</strong>
+            API: <code>:3002</code> | 
+            Bull Dashboard: <code>:3003</code> | 
+            This Playground: <code>:3004</code>
+        </div>
+        
         <div class="tabs">
             <div class="tab active" onclick="switchTab('scrape')">Scrape</div>
             <div class="tab" onclick="switchTab('crawl')">Crawl</div>
@@ -216,7 +235,7 @@
             <button onclick="mapUrl()">Map Website</button>
         </div>
 
-        <div id="loading" class="loading" style="display:none;">Processing... This may take a moment with local LLM.</div>
+        <div id="loading" class="loading" style="display:none;">Processing... This may take a moment.</div>
         <div id="result" class="result" style="display:none;">
             <h3>Result:</h3>
             <pre id="result-content"></pre>
@@ -224,14 +243,15 @@
     </div>
 
     <script>
-        // API base URL - when served through nginx, API calls go through the same host
-        const API_BASE = '';
+        // API is on port 3002
+        const API_PORT = window.location.port === '3004' ? '3002' : window.location.port;
+        const API_BASE = `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
         let currentCrawlId = null;
 
         // Check API status on load
         async function checkApiStatus() {
             try {
-                const response = await fetch('/v1/test');
+                const response = await fetch(`${API_BASE}/v1/test`);
                 const statusEl = document.getElementById('status');
                 if (response.ok) {
                     statusEl.classList.add('online');
@@ -243,7 +263,7 @@
             } catch (error) {
                 const statusEl = document.getElementById('status');
                 statusEl.classList.add('offline');
-                statusEl.title = 'API is offline';
+                statusEl.title = 'API is offline: ' + error.message;
             }
         }
 
