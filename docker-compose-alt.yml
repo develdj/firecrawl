@@ -4,17 +4,26 @@ x-common-env: &common-env
   ENV: local
   REDIS_URL: '${REDIS_URL:-redis://redis:6379}'
   REDIS_RATE_LIMIT_URL: '${REDIS_RATE_LIMIT_URL:-redis://redis:6379}'
-  PLAYWRIGHT_MICROSERVICE_URL: '${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}'
+  PLAYWRIGHT_MICROSERVICE_URL: '${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000}'
   USE_DB_AUTHENTICATION: '${USE_DB_AUTHENTICATION:-false}'
   TEST_API_KEY: '${TEST_API_KEY:-test-key}'
   LOGGING_LEVEL: '${LOGGING_LEVEL:-info}'
+  OPENAI_API_KEY: '${OPENAI_API_KEY:-ollama}'
+  OPENAI_BASE_URL: '${OPENAI_BASE_URL:-http://host.docker.internal:11434/v1}'
+  LLM_MODEL: '${LLM_MODEL:-llama3.2}'
+  SEARXNG_URL: '${SEARXNG_URL:-http://host.docker.internal:8888}'
 
 services:
   playwright-service:
-    image: 'ghcr.io/mendableai/playwright-service:latest'
+    image: ghcr.io/browserless/chromium:latest
+    platform: linux/arm64
     environment:
       PORT: 3000
-      BLOCK_MEDIA: '${BLOCK_MEDIA:-true}'
+      TIMEOUT: 60000
+      CONCURRENT: 3
+      QUEUED: 10
+      CORS: 'true'
+      TOKEN: '${PLAYWRIGHT_TOKEN:-firecrawl-secret}'
     shm_size: '2gb'
     cap_add:
       - SYS_ADMIN
@@ -22,12 +31,16 @@ services:
       - backend
 
   api:
-    image: 'ghcr.io/mendableai/firecrawl:latest'
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: firecrawl-jetson:latest
     environment:
       <<: *common-env
       HOST: 0.0.0.0
       PORT: '${INTERNAL_PORT:-3002}'
-      FLY_PROCESS_GROUP: app
+      NODE_ENV: production
+      NUM_WORKERS_PER_QUEUE: '${NUM_WORKERS_PER_QUEUE:-8}'
     networks:
       - backend
     depends_on:
@@ -35,28 +48,25 @@ services:
       - playwright-service
     ports:
       - '${PORT:-3002}:${INTERNAL_PORT:-3002}'
-    command: ['node', 'dist/index.js']
-
-  worker:
-    image: 'ghcr.io/mendableai/firecrawl:latest'
-    environment:
-      <<: *common-env
-      FLY_PROCESS_GROUP: worker
-      MODEL_NAME: '${MODEL_NAME:-gpt-3.5-turbo}'
-    networks:
-      - backend
-    depends_on:
-      - redis
-      - playwright-service
-      - api
-    command: ['node', 'dist/workers/index.js']
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
 
   redis:
-    image: 'redis:alpine'
+    image: redis:7-alpine
+    platform: linux/arm64
     networks:
       - backend
-    command: 'redis-server --bind 0.0.0.0'
+    command: 'redis-server --bind 0.0.0.0 --maxmemory 512mb --maxmemory-policy noeviction --save ""'
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   backend:
