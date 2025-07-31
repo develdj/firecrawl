@@ -1,0 +1,63 @@
+version: '3.8'
+
+x-common-env: &common-env
+  ENV: local
+  REDIS_URL: '${REDIS_URL:-redis://redis:6379}'
+  REDIS_RATE_LIMIT_URL: '${REDIS_RATE_LIMIT_URL:-redis://redis:6379}'
+  PLAYWRIGHT_MICROSERVICE_URL: '${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}'
+  USE_DB_AUTHENTICATION: '${USE_DB_AUTHENTICATION:-false}'
+  TEST_API_KEY: '${TEST_API_KEY:-test-key}'
+  LOGGING_LEVEL: '${LOGGING_LEVEL:-info}'
+
+services:
+  playwright-service:
+    image: 'ghcr.io/mendableai/playwright-service:latest'
+    environment:
+      PORT: 3000
+      BLOCK_MEDIA: '${BLOCK_MEDIA:-true}'
+    shm_size: '2gb'
+    cap_add:
+      - SYS_ADMIN
+    networks:
+      - backend
+
+  api:
+    image: 'ghcr.io/mendableai/firecrawl:latest'
+    environment:
+      <<: *common-env
+      HOST: 0.0.0.0
+      PORT: '${INTERNAL_PORT:-3002}'
+      FLY_PROCESS_GROUP: app
+    networks:
+      - backend
+    depends_on:
+      - redis
+      - playwright-service
+    ports:
+      - '${PORT:-3002}:${INTERNAL_PORT:-3002}'
+    command: ['node', 'dist/index.js']
+
+  worker:
+    image: 'ghcr.io/mendableai/firecrawl:latest'
+    environment:
+      <<: *common-env
+      FLY_PROCESS_GROUP: worker
+      MODEL_NAME: '${MODEL_NAME:-gpt-3.5-turbo}'
+    networks:
+      - backend
+    depends_on:
+      - redis
+      - playwright-service
+      - api
+    command: ['node', 'dist/workers/index.js']
+
+  redis:
+    image: 'redis:alpine'
+    networks:
+      - backend
+    command: 'redis-server --bind 0.0.0.0'
+    restart: unless-stopped
+
+networks:
+  backend:
+    driver: bridge
