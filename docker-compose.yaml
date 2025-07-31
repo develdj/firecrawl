@@ -180,18 +180,18 @@ services:
       - "firecrawl.description=Queue monitoring dashboard"
 
   # Firecrawl Playground UI (Optional - uncomment to use)
-   playground:
-     image: nginx:alpine
-     volumes:
-       - ./playground.html:/usr/share/nginx/html/index.html:ro
-     ports:
-       - "${PLAYGROUND_PORT:-3004}:80"
-     networks:
-       - backend
-     restart: unless-stopped
-     labels:
-       - "firecrawl.service=playground"
-       - "firecrawl.description=Local testing interface"
+  # playground:
+  #   image: nginx:alpine
+  #   volumes:
+  #     - ./playground.html:/usr/share/nginx/html/index.html:ro
+  #   ports:
+  #     - "${PLAYGROUND_PORT:-3004}:80"
+  #   networks:
+  #     - backend
+  #   restart: unless-stopped
+  #   labels:
+  #     - "firecrawl.service=playground"
+  #     - "firecrawl.description=Local testing interface"
 
   # Ollama Proxy (Optional - for better Docker networking with Ollama)
   # Uncomment if you have issues connecting to Ollama from containers
