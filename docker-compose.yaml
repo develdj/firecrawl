@@ -92,7 +92,12 @@ services:
   # Playwright Service - Browser automation
   playwright-service:
     # image: ghcr.io/mendableai/playwright-service:latest
-    build: apps/playwright-service-ts
+    image: firecrawl-jetson:latest
+    # build: apps/playwright-service-ts
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       PORT: 3000
       PROXY_SERVER: ${PROXY_SERVER}
@@ -157,6 +162,25 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+  # Bull Dashboard for queue monitoring
+  bull-dashboard:
+    image: nauverse/bull-board:latest
+    restart: unless-stopped
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - BULL_PREFIX=bull
+      - USER_USERNAME=admin  # Optional authentication
+      - USER_PASSWORD=secret
+    ports:
+      - "3003:3000"
+    depends_on:
+      - redis
+    labels:
+      - "coolify.managed=true"
+      - "coolify.type=application"
+      - "coolify.name=bull-dashboard"
 
   # Bull Board - Queue monitoring dashboard (Optional)
   #bull-board:
@@ -180,18 +204,18 @@ services:
   #    - "firecrawl.description=Queue monitoring dashboard"
 
   # Firecrawl Playground UI (Optional - uncomment to use)
-  # playground:
-  #   image: nginx:alpine
-  #   volumes:
-  #     - ./playground.html:/usr/share/nginx/html/index.html:ro
-  #   ports:
-  #     - "${PLAYGROUND_PORT:-3004}:80"
-  #   networks:
-  #     - backend
-  #   restart: unless-stopped
-  #   labels:
-  #     - "firecrawl.service=playground"
-  #     - "firecrawl.description=Local testing interface"
+  playground:
+     image: nginx:alpine
+     volumes:
+       - ./playground.html:/usr/share/nginx/html/index.html:ro
+     ports:
+       - "${PLAYGROUND_PORT:-3004}:80"
+     networks:
+       - backend
+     restart: unless-stopped
+     labels:
+       - "firecrawl.service=playground"
+       - "firecrawl.description=Local testing interface"
 
   # Ollama Proxy (Optional - for better Docker networking with Ollama)
   # Uncomment if you have issues connecting to Ollama from containers
