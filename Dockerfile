@@ -181,7 +181,7 @@ stdout_logfile=/var/log/supervisor/redis-check.log
 stderr_logfile=/var/log/supervisor/redis-check.log
 priority=10
 
-# Worker process (no specific port needed)
+# Worker process on port 3005
 [program:firecrawl-worker]
 command=node dist/src/services/queue-worker.js
 directory=/app/firecrawl/apps/api
@@ -189,7 +189,7 @@ autostart=true
 autorestart=true
 stdout_logfile=/app/logs/worker.log
 stderr_logfile=/app/logs/worker-error.log
-environment=NODE_ENV="production",IS_WORKER_PROCESS="true",PLAYWRIGHT_MICROSERVICE_URL="http://localhost:3000",PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium-browser"
+environment=NODE_ENV="production",IS_WORKER_PROCESS="true",PLAYWRIGHT_MICROSERVICE_URL="http://localhost:3000",PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium-browser",PORT="3005",WORKER_PORT="3005"
 priority=20
 startsecs=10
 
@@ -215,6 +215,8 @@ curl -f http://localhost/health || exit 1
 curl -f http://localhost:3002/test || exit 1
 # Check browser service (port 3000 internal)
 curl -f http://localhost:3000/health || exit 1
+# Check worker if it exposes port 3005
+curl -f http://localhost:3005/health || true  # Don't fail if worker doesn't have health endpoint
 EOF
 RUN chmod +x /app/healthcheck.sh
 
@@ -222,6 +224,7 @@ RUN chmod +x /app/healthcheck.sh
 ENV NODE_ENV=production \
     PORT=3002 \
     HOST=0.0.0.0 \
+    WORKER_PORT=3005 \
     NUM_WORKERS_PER_QUEUE=8 \
     REDIS_HOST=redis \
     REDIS_URL=redis://redis:6379 \
@@ -234,8 +237,8 @@ ENV NODE_ENV=production \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Expose both API and nginx ports
-EXPOSE 3002 80
+# Expose API, nginx, and worker ports
+EXPOSE 3002 80 3005
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
