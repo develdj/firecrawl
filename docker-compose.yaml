@@ -179,14 +179,353 @@ services:
   # Firecrawl Playground UI
   playground:
     image: nginx:alpine
-    volumes:
-      - ./playground.html:/usr/share/nginx/html/index.html:ro
     ports:
       - "${PLAYGROUND_PORT:-3004}:80"
     restart: unless-stopped
     labels:
       - "firecrawl.service=playground"
       - "firecrawl.description=Local testing interface"
+    command: |
+      sh -c "echo '<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firecrawl Local Playground</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #ff6b6b;
+            padding-bottom: 10px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        textarea {
+            min-height: 100px;
+            font-family: monospace;
+        }
+        button {
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #ff5252;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f8f8;
+            border-radius: 5px;
+            border: 1px solid #e0e0e0;
+        }
+        .result h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: #282c34;
+            color: #abb2bf;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .error {
+            color: #e06c75;
+            background: #ffeaea;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        .tab.active {
+            border-bottom-color: #ff6b6b;
+            color: #ff6b6b;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .format-options {
+            display: flex;
+            gap: 15px;
+            margin: 10px 0;
+        }
+        .format-options label {
+            display: flex;
+            align-items: center;
+            font-weight: normal;
+            margin-bottom: 0;
+        }
+        .format-options input[type="checkbox"] {
+            width: auto;
+            margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔥 Firecrawl Local Playground</h1>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('scrape')">Scrape</div>
+            <div class="tab" onclick="switchTab('crawl')">Crawl</div>
+            <div class="tab" onclick="switchTab('map')">Map</div>
+        </div>
+
+        <!-- Scrape Tab -->
+        <div id="scrape-tab" class="tab-content active">
+            <div class="input-group">
+                <label for="scrape-url">URL to Scrape:</label>
+                <input type="url" id="scrape-url" placeholder="https://example.com" value="http://www.ausiliari-tessili.com">
+            </div>
+
+            <div class="input-group">
+                <label>Formats:</label>
+                <div class="format-options">
+                    <label><input type="checkbox" id="format-markdown" checked> Markdown</label>
+                    <label><input type="checkbox" id="format-html"> HTML</label>
+                    <label><input type="checkbox" id="format-rawHtml"> Raw HTML</label>
+                    <label><input type="checkbox" id="format-extract"> Extract (LLM)</label>
+                    <label><input type="checkbox" id="format-screenshot"> Screenshot</label>
+                </div>
+            </div>
+
+            <div class="input-group" id="extract-options" style="display:none;">
+                <label for="extract-prompt">Extract Prompt:</label>
+                <textarea id="extract-prompt" placeholder="Extract the main content, title, and key information...">Extract the company name, main services, and contact information</textarea>
+            </div>
+
+            <div class="input-group">
+                <label for="timeout">Timeout (ms):</label>
+                <input type="number" id="timeout" value="120000" min="1000" max="300000">
+            </div>
+
+            <button onclick="scrapeUrl()">Scrape URL</button>
+        </div>
+
+        <!-- Crawl Tab -->
+        <div id="crawl-tab" class="tab-content">
+            <div class="input-group">
+                <label for="crawl-url">URL to Crawl:</label>
+                <input type="url" id="crawl-url" placeholder="https://example.com" value="http://www.ausiliari-tessili.com">
+            </div>
+
+            <div class="input-group">
+                <label for="crawl-limit">Page Limit:</label>
+                <input type="number" id="crawl-limit" value="5" min="1" max="100">
+            </div>
+
+            <div class="input-group">
+                <label for="max-depth">Max Depth:</label>
+                <input type="number" id="max-depth" value="2" min="1" max="10">
+            </div>
+
+            <button onclick="crawlUrl()">Start Crawl</button>
+            <button onclick="checkCrawlStatus()" style="display:none;" id="check-status">Check Status</button>
+        </div>
+
+        <!-- Map Tab -->
+        <div id="map-tab" class="tab-content">
+            <div class="input-group">
+                <label for="map-url">URL to Map:</label>
+                <input type="url" id="map-url" placeholder="https://example.com" value="http://www.ausiliari-tessili.com">
+            </div>
+
+            <button onclick="mapUrl()">Map Website</button>
+        </div>
+
+        <div id="loading" class="loading" style="display:none;">Processing... This may take a moment with local LLM.</div>
+        <div id="result" class="result" style="display:none;">
+            <h3>Result:</h3>
+            <pre id="result-content"></pre>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3002';
+        let currentCrawlId = null;
+
+        // Show/hide extract options when checkbox is toggled
+        document.getElementById('format-extract').addEventListener('change', function() {
+            document.getElementById('extract-options').style.display = this.checked ? 'block' : 'none';
+        });
+
+        function switchTab(tab) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            
+            // Show selected tab
+            document.getElementById(`${tab}-tab`).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        async function scrapeUrl() {
+            const url = document.getElementById('scrape-url').value;
+            const timeout = parseInt(document.getElementById('timeout').value);
+            
+            // Get selected formats
+            const formats = [];
+            if (document.getElementById('format-markdown').checked) formats.push('markdown');
+            if (document.getElementById('format-html').checked) formats.push('html');
+            if (document.getElementById('format-rawHtml').checked) formats.push('rawHtml');
+            if (document.getElementById('format-extract').checked) formats.push('extract');
+            if (document.getElementById('format-screenshot').checked) formats.push('screenshot');
+
+            const body = {
+                url,
+                formats,
+                timeout
+            };
+
+            // Add extract options if needed
+            if (formats.includes('extract')) {
+                body.extract = {
+                    prompt: document.getElementById('extract-prompt').value
+                };
+            }
+
+            await makeRequest('/v1/scrape', body);
+        }
+
+        async function crawlUrl() {
+            const url = document.getElementById('crawl-url').value;
+            const limit = parseInt(document.getElementById('crawl-limit').value);
+            const maxDepth = parseInt(document.getElementById('max-depth').value);
+
+            const body = {
+                url,
+                limit,
+                maxDepth
+            };
+
+            const result = await makeRequest('/v1/crawl', body);
+            if (result && result.id) {
+                currentCrawlId = result.id;
+                document.getElementById('check-status').style.display = 'inline-block';
+                showResult({ message: `Crawl started! Job ID: ${currentCrawlId}`, ...result });
+            }
+        }
+
+        async function checkCrawlStatus() {
+            if (!currentCrawlId) return;
+            await makeRequest(`/v1/crawl/${currentCrawlId}`, null, 'GET');
+        }
+
+        async function mapUrl() {
+            const url = document.getElementById('map-url').value;
+            await makeRequest('/v1/map', { url });
+        }
+
+        async function makeRequest(endpoint, body, method = 'POST') {
+            const loading = document.getElementById('loading');
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('result-content');
+
+            loading.style.display = 'block';
+            resultDiv.style.display = 'none';
+
+            try {
+                const options = {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                };
+
+                if (body && method !== 'GET') {
+                    options.body = JSON.stringify(body);
+                }
+
+                const response = await fetch(`${API_BASE}${endpoint}`, options);
+                const data = await response.json();
+
+                loading.style.display = 'none';
+                resultDiv.style.display = 'block';
+
+                if (data.success === false) {
+                    resultContent.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                    if (data.details) {
+                        resultContent.innerHTML += `<pre>${JSON.stringify(data.details, null, 2)}</pre>`;
+                    }
+                } else {
+                    resultContent.textContent = JSON.stringify(data, null, 2);
+                }
+
+                return data;
+            } catch (error) {
+                loading.style.display = 'none';
+                resultDiv.style.display = 'block';
+                resultContent.innerHTML = `<div class="error">Request failed: ${error.message}</div>`;
+            }
+        }
+
+        function showResult(data) {
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('result-content');
+            resultDiv.style.display = 'block';
+            resultContent.textContent = JSON.stringify(data, null, 2);
+        }
+    </script>
+</body>
+</html>
+' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
 
   # Bull Board - Queue monitoring dashboard (Optional)
   #bull-board:
