@@ -108,6 +108,30 @@ server.listen(3000, '0.0.0.0', () => {
 });
 EOF
 
+# Create Bull Dashboard service (simple version for ARM64)
+RUN cat > /app/bull-dashboard.js << 'EOF'
+const express = require('express');
+const app = express();
+
+app.get('/health', (req, res) => {
+  res.send('Bull Dashboard OK');
+});
+
+app.get('/', (req, res) => {
+  res.json({
+    status: 'Bull Dashboard Running',
+    message: 'Simple Bull Dashboard for ARM64',
+    redis: process.env.REDIS_HOST || 'redis',
+    port: 3003
+  });
+});
+
+const PORT = 3003;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Bull Dashboard listening on port ${PORT}`);
+});
+EOF
+
 # Configure nginx to listen on port 80 (will be mapped to 3004 externally)
 RUN cat > /etc/nginx/sites-available/default << 'EOF'
 server {
@@ -173,6 +197,16 @@ stderr_logfile=/var/log/supervisor/browser.log
 environment=NODE_ENV="production"
 priority=5
 
+# Bull Dashboard on port 3003
+[program:bull-dashboard]
+command=node /app/bull-dashboard.js
+autostart=true
+autorestart=true
+stdout_logfile=/var/log/supervisor/bull-dashboard.log
+stderr_logfile=/var/log/supervisor/bull-dashboard.log
+environment=NODE_ENV="production",REDIS_HOST="${REDIS_HOST:-redis}"
+priority=8
+
 [program:redis-check]
 command=/bin/bash -c 'until redis-cli -h ${REDIS_HOST:-redis} ping; do echo "Waiting for Redis..."; sleep 2; done; echo "Redis ready"'
 autostart=true
@@ -215,6 +249,8 @@ curl -f http://localhost/health || exit 1
 curl -f http://localhost:3002/test || exit 1
 # Check browser service (port 3000 internal)
 curl -f http://localhost:3000/health || exit 1
+# Check Bull Dashboard (port 3003)
+curl -f http://localhost:3003/health || exit 1
 # Check worker if it exposes port 3005
 curl -f http://localhost:3005/health || true  # Don't fail if worker doesn't have health endpoint
 EOF
@@ -237,8 +273,8 @@ ENV NODE_ENV=production \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Expose API, nginx, and worker ports
-EXPOSE 3002 80 3005
+# Expose all service ports
+EXPOSE 3002 80 3003 3005
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
