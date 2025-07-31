@@ -106,12 +106,15 @@ services:
 
   # Bull Dashboard for queue monitoring
   bull-dashboard:
-    image: ghcr.io/felixmosh/bull-board:latest
+    image: nauverse/bull-board:latest
     restart: unless-stopped
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
+      - BULL_PREFIX=bull
+      - USER_USERNAME=admin  # Optional authentication
+      - USER_PASSWORD=secret
     ports:
       - "3003:3000"
     depends_on:
@@ -120,6 +123,8 @@ services:
       - "coolify.managed=true"
       - "coolify.type=application"
       - "coolify.name=bull-dashboard"
+
+
 
 volumes:
   redis-data:
