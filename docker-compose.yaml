@@ -1,427 +1,108 @@
-name: firecrawl
-
-x-common-service: &common-service
-  # NOTE: If you don't want to build the service locally,
-  # uncomment the image: statement and comment out the build: statement
-  # image: ghcr.io/mendableai/firecrawl:latest
-  build: apps/api
-  ulimits:
-    nofile:
-      soft: 65535
-      hard: 65535
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  restart: unless-stopped
-  logging:
-    driver: "json-file"
-    options:
-      max-size: "10m"
-      max-file: "3"
-
-x-common-env: &common-env
-  # Redis Configuration
-  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-  REDIS_RATE_LIMIT_URL: ${REDIS_URL:-redis://redis:6379}
-  
-  # Playwright Configuration
-  PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
-  
-  # Authentication
-  USE_DB_AUTHENTICATION: ${USE_DB_AUTHENTICATION:-false}
-  BULL_AUTH_KEY: ${BULL_AUTH_KEY}
-  TEST_API_KEY: ${TEST_API_KEY}
-  
-  # LLM Configuration (Ollama/OpenAI)
-  OPENAI_API_KEY: ${OPENAI_API_KEY}
-  OPENAI_BASE_URL: ${OPENAI_BASE_URL}
-  MODEL_NAME: ${MODEL_NAME}
-  MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME}
-  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
-  
-  # Analytics & Monitoring
-  POSTHOG_API_KEY: ${POSTHOG_API_KEY}
-  POSTHOG_HOST: ${POSTHOG_HOST}
-  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
-  
-  # Supabase Configuration
-  SUPABASE_ANON_TOKEN: ${SUPABASE_ANON_TOKEN}
-  SUPABASE_URL: ${SUPABASE_URL}
-  SUPABASE_SERVICE_TOKEN: ${SUPABASE_SERVICE_TOKEN}
-  
-  # Search Configuration
-  SERPER_API_KEY: ${SERPER_API_KEY}
-  SEARCHAPI_API_KEY: ${SEARCHAPI_API_KEY}
-  SEARXNG_ENDPOINT: ${SEARXNG_ENDPOINT}
-  SEARXNG_ENGINES: ${SEARXNG_ENGINES}
-  SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES}
-  
-  # Proxy Configuration
-  PROXY_SERVER: ${PROXY_SERVER}
-  PROXY_USERNAME: ${PROXY_USERNAME}
-  PROXY_PASSWORD: ${PROXY_PASSWORD}
-  
-  # Other Configuration
-  SELF_HOSTED_WEBHOOK_URL: ${SELF_HOSTED_WEBHOOK_URL}
-  LOGGING_LEVEL: ${LOGGING_LEVEL:-info}
-  
-  # Timeout Configuration
-  SCRAPE_TIMEOUT: ${SCRAPE_TIMEOUT:-120000}
-  REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-120000}
-  BULL_JOB_TIMEOUT: ${BULL_JOB_TIMEOUT:-300000}
+version: '3.8'
 
 services:
-  # Redis - Data store and queue backend
   redis:
-    image: redis:alpine
-    # image: valkey/valkey:alpine  # Alternative: Valkey (Redis fork)
-    command: redis-server --bind 0.0.0.0 --maxmemory 2gb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis-data:/data
+    image: redis:7-alpine
     restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 5
       start_period: 30s
 
-  # Playwright Service - Browser automation
   playwright-service:
-    # image: ghcr.io/mendableai/playwright-service:latest
-    image: firecrawl-jetson:latest
-    # build: apps/playwright-service-ts
-    build:
-      context: .
-      dockerfile: Dockerfile
-    environment:
-      PORT: 3000
-      PROXY_SERVER: ${PROXY_SERVER}
-      PROXY_USERNAME: ${PROXY_USERNAME}
-      PROXY_PASSWORD: ${PROXY_PASSWORD}
-      BLOCK_MEDIA: ${BLOCK_MEDIA:-true}
-      PLAYWRIGHT_TIMEOUT: ${PLAYWRIGHT_TIMEOUT:-60000}
+    image: mcr.microsoft.com/playwright:v1.40.0-jammy
     restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    command: >
+      sh -c "
+        npx playwright install chromium &&
+        node -e \"
+          const http = require('http');
+          const { chromium } = require('playwright');
+          
+          const server = http.createServer(async (req, res) => {
+            if (req.url === '/health') {
+              res.writeHead(200);
+              res.end('OK');
+              return;
+            }
+            res.writeHead(200);
+            res.end('Playwright service ready');
+          });
+          
+          server.listen(3000, '0.0.0.0', () => {
+            console.log('Playwright service listening on port 3000');
+          });
+        \"
+      "
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 10
       start_period: 60s
 
-  # API Service - Main REST API
-  api:
-    <<: *common-service
-    environment:
-      <<: *common-env
-      HOST: "0.0.0.0"
-      PORT: ${INTERNAL_PORT:-3002}
-      FLY_PROCESS_GROUP: app
-      ENV: local
-      NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
-    depends_on:
-      redis:
-        condition: service_healthy
-      playwright-service:
-        condition: service_healthy
-    ports:
-      - "${PORT:-3002}:${INTERNAL_PORT:-3002}"
-    command: ["pnpm", "run", "start:production"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${INTERNAL_PORT:-3002}/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # Worker Service - Background job processor
-  worker:
-    <<: *common-service
-    environment:
-      <<: *common-env
-      FLY_PROCESS_GROUP: worker
-      ENV: local
-      NUM_WORKERS_PER_QUEUE: ${NUM_WORKERS_PER_QUEUE:-8}
-    depends_on:
-      redis:
-        condition: service_healthy
-      playwright-service:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-    command: ["pnpm", "run", "workers"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # Bull Dashboard for queue monitoring
-  bull-dashboard:
-    image: nauverse/bull-board:latest
+  firecrawl:
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
+    ports:
+      - "80:80"       # Nginx serving playground
+      - "3002:3002"   # API port (optional, can remove if only using nginx)
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - HOST=0.0.0.0
+      - NUM_WORKERS_PER_QUEUE=8
+      - REDIS_HOST=redis
+      - REDIS_URL=redis://redis:6379
+      - REDIS_RATE_LIMIT_URL=redis://redis:6379
+      - USE_DB_AUTHENTICATION=false
+      - PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000
+      - LOGGING_LEVEL=info
+      - MAX_RAM=0.95
+      - MAX_CPU=0.95
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - LLAMAPARSE_API_KEY=${LLAMAPARSE_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      playwright-service:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "/app/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  bull-dashboard:
+    image: deadly0/bull-board:latest
+    restart: unless-stopped
+    ports:
+      - "3333:3000"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
-      - BULL_PREFIX=bull
-      - USER_USERNAME=admin  # Optional authentication
-      - USER_PASSWORD=secret
-    ports:
-      - "3003:3000"
     depends_on:
       - redis
-    labels:
-      - "coolify.managed=true"
-      - "coolify.type=application"
-      - "coolify.name=bull-dashboard"
-
-  # Firecrawl Playground UI
-  playground:
-    image: nginx:alpine
-    ports:
-      - "${PLAYGROUND_PORT:-3004}:80"
-    restart: unless-stopped
-    labels:
-      - "firecrawl.service=playground"
-      - "firecrawl.description=Local testing interface"
-    command: |
-      sh -c "echo '<!DOCTYPE html>
-      <html lang=\"en\">
-      <head>
-          <meta charset=\"UTF-8\">
-          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
-          <title>Firecrawl Playground</title>
-          <style>
-              * { margin: 0; padding: 0; box-sizing: border-box; }
-              body { 
-                  font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif;
-                  background: #0a0a0a;
-                  color: #ffffff;
-                  min-height: 100vh;
-                  display: flex;
-                  flex-direction: column;
-              }
-              .header {
-                  background: #111;
-                  padding: 1rem 2rem;
-                  border-bottom: 1px solid #333;
-              }
-              .container {
-                  max-width: 1200px;
-                  margin: 0 auto;
-                  padding: 2rem;
-                  flex: 1;
-              }
-              h1 { 
-                  font-size: 2.5rem; 
-                  margin-bottom: 0.5rem;
-                  background: linear-gradient(45deg, #ff6b6b, #f06595);
-                  -webkit-background-clip: text;
-                  -webkit-text-fill-color: transparent;
-              }
-              .subtitle { 
-                  color: #888; 
-                  margin-bottom: 2rem;
-              }
-              .endpoint-section {
-                  background: #1a1a1a;
-                  border-radius: 8px;
-                  padding: 2rem;
-                  margin-bottom: 2rem;
-                  border: 1px solid #333;
-              }
-              .endpoint {
-                  display: flex;
-                  align-items: center;
-                  gap: 1rem;
-                  margin-bottom: 1rem;
-              }
-              .method {
-                  background: #2a2a2a;
-                  padding: 0.5rem 1rem;
-                  border-radius: 4px;
-                  font-weight: bold;
-                  min-width: 80px;
-                  text-align: center;
-              }
-              .method.get { background: #1e7e34; }
-              .method.post { background: #0062cc; }
-              .url {
-                  background: #2a2a2a;
-                  padding: 0.5rem 1rem;
-                  border-radius: 4px;
-                  flex: 1;
-                  font-family: monospace;
-              }
-              .test-section {
-                  background: #1a1a1a;
-                  border-radius: 8px;
-                  padding: 2rem;
-                  border: 1px solid #333;
-              }
-              input, textarea {
-                  width: 100%;
-                  padding: 0.75rem;
-                  margin-bottom: 1rem;
-                  background: #2a2a2a;
-                  border: 1px solid #444;
-                  border-radius: 4px;
-                  color: #fff;
-                  font-family: monospace;
-              }
-              button {
-                  background: linear-gradient(45deg, #ff6b6b, #f06595);
-                  color: white;
-                  border: none;
-                  padding: 0.75rem 2rem;
-                  border-radius: 4px;
-                  cursor: pointer;
-                  font-weight: bold;
-                  transition: transform 0.2s;
-              }
-              button:hover { transform: translateY(-2px); }
-              button:active { transform: translateY(0); }
-              #result {
-                  margin-top: 2rem;
-                  padding: 1rem;
-                  background: #2a2a2a;
-                  border-radius: 4px;
-                  white-space: pre-wrap;
-                  font-family: monospace;
-                  max-height: 400px;
-                  overflow-y: auto;
-              }
-              .info-box {
-                  background: #1e3a5f;
-                  border: 1px solid #2e5a8f;
-                  padding: 1rem;
-                  border-radius: 4px;
-                  margin-bottom: 2rem;
-              }
-          </style>
-      </head>
-      <body>
-          <div class=\"header\">
-              <h1>🔥 Firecrawl Playground</h1>
-              <p class=\"subtitle\">Test your Firecrawl API locally</p>
-          </div>
-          <div class=\"container\">
-              <div class=\"info-box\">
-                  <p>📍 API Base URL: <code>http://localhost:3002</code></p>
-                  <p>🔑 Default test API key: Use the TEST_API_KEY from your environment</p>
-              </div>
-              
-              <div class=\"endpoint-section\">
-                  <h2>Available Endpoints</h2>
-                  <div class=\"endpoint\">
-                      <span class=\"method get\">GET</span>
-                      <span class=\"url\">/</span>
-                      <span>Health check</span>
-                  </div>
-                  <div class=\"endpoint\">
-                      <span class=\"method post\">POST</span>
-                      <span class=\"url\">/v0/scrape</span>
-                      <span>Scrape a single URL</span>
-                  </div>
-                  <div class=\"endpoint\">
-                      <span class=\"method post\">POST</span>
-                      <span class=\"url\">/v0/crawl</span>
-                      <span>Crawl a website</span>
-                  </div>
-                  <div class=\"endpoint\">
-                      <span class=\"method get\">GET</span>
-                      <span class=\"url\">/v0/crawl/status/:jobId</span>
-                      <span>Check crawl status</span>
-                  </div>
-              </div>
-              
-              <div class=\"test-section\">
-                  <h2>Test Scrape Endpoint</h2>
-                  <input type=\"text\" id=\"apiKey\" placeholder=\"Enter your API key\" />
-                  <input type=\"text\" id=\"url\" placeholder=\"Enter URL to scrape (e.g., https://example.com)\" value=\"https://example.com\" />
-                  <button onclick=\"testScrape()\">Test Scrape</button>
-                  <div id=\"result\"></div>
-              </div>
-          </div>
-          
-          <script>
-              async function testScrape() {
-                  const apiKey = document.getElementById(\"apiKey\").value;
-                  const url = document.getElementById(\"url\").value;
-                  const resultDiv = document.getElementById(\"result\");
-                  
-                  if (!apiKey) {
-                      resultDiv.textContent = \"Please enter your API key\";
-                      return;
-                  }
-                  
-                  resultDiv.textContent = \"Loading...\";
-                  
-                  try {
-                      const response = await fetch(\"http://localhost:3002/v0/scrape\", {
-                          method: \"POST\",
-                          headers: {
-                              \"Content-Type\": \"application/json\",
-                              \"Authorization\": \"Bearer \" + apiKey
-                          },
-                          body: JSON.stringify({ url })
-                      });
-                      
-                      const data = await response.json();
-                      resultDiv.textContent = JSON.stringify(data, null, 2);
-                  } catch (error) {
-                      resultDiv.textContent = \"Error: \" + error.message;
-                  }
-              }
-              
-              // Test connection on load
-              window.onload = async () => {
-                  try {
-                      const response = await fetch(\"http://localhost:3002/\");
-                      if (response.ok) {
-                          console.log(\"✅ API is running\");
-                      }
-                  } catch (error) {
-                      document.getElementById(\"result\").textContent = \"⚠️ API not reachable. Make sure Firecrawl is running on port 3002\";
-                  }
-              };
-          </script>
-      </body>
-      </html>' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
-
-  # Bull Board - Queue monitoring dashboard (Optional)
-  #bull-board:
-  #  image: deadly0/bull-board:latest
-  #  environment:
-  #    REDIS_HOST: redis
-  #    REDIS_PORT: 6379
-  #    REDIS_PASSWORD: ${REDIS_PASSWORD}
-      # If you want to add authentication to Bull Board
-      # USERNAME: ${BULL_BOARD_USERNAME:-admin}
-      # PASSWORD: ${BULL_BOARD_PASSWORD:-admin}
-  #  ports:
-  #    - "${BULL_BOARD_PORT:-3003}:3000"
-  #  depends_on:
-  #    - redis
-  #  restart: unless-stopped
-  #  labels:
-  #    - "firecrawl.service=monitoring"
-  #    - "firecrawl.description=Queue monitoring dashboard"
-
-  # Ollama Proxy (Optional - for better Docker networking with Ollama)
-  # Uncomment if you have issues connecting to Ollama from containers
-  # ollama-proxy:
-  #   image: alpine/socat:latest
-  #   command: TCP-LISTEN:11434,fork TCP-CONNECT:host.docker.internal:11434
-  #   restart: unless-stopped
-  #   labels:
-  #     - "firecrawl.service=proxy"
-  #     - "firecrawl.description=Ollama connection proxy"
 
 volumes:
-  redis-data:
-    driver: local
-    labels:
-      - "firecrawl.volume=redis"
-      - "firecrawl.description=Redis persistent data"
+  redis_data:
