@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && npm install -g pnpm@9.13.0
 
 # Clone Firecrawl and build API
-RUN https://github.com/develdj/firecrawl
+RUN git clone https://github.com/develdj/firecrawl.git /build/firecrawl
 WORKDIR /build/firecrawl/apps/api
 RUN pnpm install --frozen-lockfile && pnpm run build
 
