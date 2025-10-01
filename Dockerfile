@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install system dependencies including Rust
 RUN apt-get update && apt-get install -y \
-    curl git build-essential redis-tools nginx chromium-browser \
+    curl git build-essential redis-tools nginx chromium-browser python3 g++ make \
     ca-certificates fonts-liberation netcat-openbsd pkg-config libssl-dev \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
