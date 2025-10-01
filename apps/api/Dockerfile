@@ -43,7 +43,7 @@ COPY . .
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/native/target \
-    pnpm install --frozen-lockfile
+    pnpm install 
 
 # Build the application
 RUN pnpm run build
