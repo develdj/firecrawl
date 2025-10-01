@@ -23,55 +23,63 @@ services:
     ports:
       - "3002:3002"  # API
       - "3003:3003"  # Bull Dashboard
-      - "3004:80"    # Playground
+      - "3004:80"    # Playground UI
       - "3005:3005"  # Worker
-      - "3006:3006"  # MCP Server
     environment:
-      # Core settings
+      # Core Configuration
       - NODE_ENV=production
       - PORT=3002
       - HOST=0.0.0.0
       - USE_DB_AUTHENTICATION=false
       
-      # Redis configuration
+      # Redis Configuration
       - REDIS_URL=redis://redis:6379
       - REDIS_RATE_LIMIT_URL=redis://redis:6379
       
-      # Ollama AI configuration
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434/api
+      # Ollama AI Configuration
+      - OLLAMA_BASE_URL=http://192.168.1.81:11434/api
       - MODEL_NAME=gpt-oss:20b
       - MODEL_EMBEDDING_NAME=nomic-embed-text:v1.5
       
-      # Bull Queue authentication
-      - BULL_AUTH_KEY=CHANGEME
+      # Bull Queue Authentication
+      - BULL_AUTH_KEY=${BULL_AUTH_KEY:-CHANGEME}
       
-      # Browser configuration
+      # Browser Configuration
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
       
-      # Resource limits (adjusted for Jetson)
+      # Resource Limits (Jetson Optimized)
       - MAX_CPU=0.75
       - MAX_RAM=0.75
       - NODE_OPTIONS=--max-old-space-size=4096
       
-      # MCP configuration
-      - MCP_PORT=3006
-      - FIRECRAWL_API_URL=http://127.0.0.1:3002
+      # Optional: SearXNG Integration
+      # - SEARXNG_ENDPOINT=http://searxng-n8ggwkkkcgw8og0wwcc8coow:8080
+      
+      # Optional: LlamaParse for PDF parsing
+      # - LLAMAPARSE_API_KEY=your_key_here
+      
+      # Optional: Proxy Configuration
+      # - PROXY_SERVER=
+      # - PROXY_USERNAME=
+      # - PROXY_PASSWORD=
+      
     volumes:
       - ./logs:/app/logs
-      - ./firecrawl-data:/app/data
+      - ./data:/app/data
     networks:
       - firecrawl-network
     depends_on:
       redis:
         condition: service_healthy
     extra_hosts:
+      # This allows container to access host services (Ollama)
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "3002"]
       interval: 30s
       timeout: 10s
-      start_period: 60s
+      start_period: 90s
       retries: 3
 
 networks:
@@ -80,4 +88,4 @@ networks:
 
 volumes:
   redis-data:
-  firecrawl-data:
+    driver: local
