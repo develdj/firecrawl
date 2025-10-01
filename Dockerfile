@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && npm install -g pnpm@9.13.0
 
 # Clone Firecrawl and build API
-RUN git clone https://github.com/mendableai/firecrawl.git /build/firecrawl
+RUN https://github.com/develdj/firecrawl
 WORKDIR /build/firecrawl/apps/api
 RUN pnpm install && pnpm run build
 
@@ -49,7 +49,7 @@ RUN git clone https://github.com/mendableai/firecrawl.git /app/firecrawl
 
 # Build Firecrawl API
 WORKDIR /app/firecrawl/apps/api
-RUN pnpm install --frozen-lockfile && pnpm run build
+RUN pnpm install  && pnpm run build
 
 # Prepare HTML playground
 RUN mkdir -p /var/www/html
