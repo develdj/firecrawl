@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates fonts-liberation netcat-openbsd pkg-config libssl-dev \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g pnpm@9.13.0 \
+    && npm install -g pnpm@9.13.0 napi-cli
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
