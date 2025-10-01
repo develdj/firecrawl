@@ -27,9 +27,6 @@ WORKDIR /app/firecrawl/apps/api
 RUN pnpm install --frozen-lockfile && pnpm run build
 
 # Copy playground HTML
-RUN mkdir -p /var/www/html
-COPY docker/playground.html /var/www/html/index.html 2>/dev/null 
-
 RUN mkdir -p /var/www/html \
     && if [ -f docker/playground.html ]; then \
          cp docker/playground.html /var/www/html/index.html; \
