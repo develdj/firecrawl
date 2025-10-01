@@ -78,7 +78,7 @@ RUN pip install --no-cache-dir \
 RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/www/html
 
 # Copy playground.html to nginx directory
-COPY playground.html /var/www/html/index.html
+COPY /docker/playground.html /var/www/html/index.html
 
 # Configure nginx
 RUN cat > /etc/nginx/sites-available/default << 'EOF'
