@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 # Clone Firecrawl and build API
 RUN https://github.com/develdj/firecrawl
 WORKDIR /build/firecrawl/apps/api
-RUN pnpm install && pnpm run build
+RUN pnpm install --frozen-lockfile && pnpm run build
 
 # Stage 2: Runtime
 FROM dustynv/cuda-python:r36.4.0-cu128-24.04
@@ -49,7 +49,7 @@ RUN git clone https://github.com/mendableai/firecrawl.git /app/firecrawl
 
 # Build Firecrawl API
 WORKDIR /app/firecrawl/apps/api
-RUN pnpm install  && pnpm run build
+RUN pnpm install --frozen-lockfile && pnpm run build
 
 # Prepare HTML playground
 RUN mkdir -p /var/www/html
