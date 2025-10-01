@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
     curl git build-essential python3 g++ make \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g pnpm@9.13.0
+    && npm install -g pnpm@9.13.0 \
+    && npm install -g napi-cli
 
 # Clone Firecrawl and build API
 RUN git clone https://github.com/develdj/firecrawl.git /build/firecrawl
@@ -33,9 +34,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy Firecrawl build artifacts from builder
 COPY --from=builder /build/firecrawl /app/firecrawl
-
-# Install pnpm & napi-cli for runtime
-RUN npm install -g pnpm napi-cli
 
 # Install Rust (optional, if your app uses native Rust modules)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
