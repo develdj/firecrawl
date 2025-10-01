@@ -2,17 +2,21 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 
 WORKDIR /app
 
-# Install dependencies with Jetson-specific Python package source
+# Install system dependencies including Rust
 RUN apt-get update && apt-get install -y \
     curl git build-essential redis-tools nginx chromium-browser \
-    ca-certificates fonts-liberation netcat-openbsd \
+    ca-certificates fonts-liberation netcat-openbsd pkg-config libssl-dev \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g pnpm@9.13.0 \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure pip to use Jetson AI Lab repository
+# Add Rust to PATH
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Configure pip for Jetson AI Lab repository
 RUN pip3 config set global.extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu129/+simple/
 
 # Clone Firecrawl from official repository
@@ -22,226 +26,168 @@ RUN git clone https://github.com/mendableai/firecrawl.git /app/firecrawl
 WORKDIR /app/firecrawl/apps/api
 RUN pnpm install --frozen-lockfile && pnpm run build
 
-# Setup MCP server directory
-WORKDIR /app/mcp
-RUN cat > package.json << 'MCPPKG'
-{
-  "name": "firecrawl-mcp-server",
-  "version": "1.0.0",
-  "main": "index.js",
-  "dependencies": {
-    "express": "^4.18.2",
-    "axios": "^1.6.0"
-  }
-}
-MCPPKG
-
-RUN cat > index.js << 'MCPJS'
-const express = require('express');
-const axios = require('axios');
-
-const app = express();
-app.use(express.json());
-
-const PORT = process.env.MCP_PORT || 3006;
-const FIRECRAWL_API_URL = process.env.FIRECRAWL_API_URL || 'http://127.0.0.1:3002';
-
-app.post('/scrape', async (req, res) => {
-  try {
-    const response = await axios.post(`${FIRECRAWL_API_URL}/v1/scrape`, req.body);
-    res.json(response.data);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/crawl', async (req, res) => {
-  try {
-    const response = await axios.post(`${FIRECRAWL_API_URL}/v1/crawl`, req.body);
-    res.json(response.data);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
-
-app.listen(PORT, () => {
-  console.log(`MCP Server running on port ${PORT}`);
-});
-MCPJS
-
-RUN npm install --production
-
-# Create playground HTML
+# Copy playground HTML
 RUN mkdir -p /var/www/html
-RUN cat > /var/www/html/index.html << 'PLAYHTML'
+COPY docker/playground.html /var/www/html/index.html 2>/dev/null || \
+    cat > /var/www/html/index.html << 'PLAYHTML'
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Firecrawl Local Playground</title>
+    <title>Firecrawl Playground</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
             padding: 20px;
-            background: #f5f5f5;
         }
         .container {
+            max-width: 1200px;
+            margin: 0 auto;
             background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
         }
-        h1 {
-            color: #333;
-            border-bottom: 2px solid #ff6b6b;
-            padding-bottom: 10px;
-        }
-        .port-info {
-            background: #e8f4f8;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        .input-group {
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            color: #555;
-        }
-        input, textarea {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            font-size: 16px;
-        }
-        textarea {
-            min-height: 100px;
-            font-family: monospace;
-        }
-        button {
-            background: #ff6b6b;
+        h1 { color: #2d3748; font-size: 2.5em; margin-bottom: 10px; text-align: center; }
+        .subtitle { text-align: center; color: #718096; margin-bottom: 30px; }
+        .info-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            border: none;
-            padding: 12px 30px;
-            border-radius: 5px;
-            font-size: 16px;
-            cursor: pointer;
-            margin-right: 10px;
-        }
-        button:hover {
-            background: #ff5252;
-        }
-        .result {
-            margin-top: 30px;
             padding: 20px;
-            background: #f8f8f8;
-            border-radius: 5px;
-            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            margin-bottom: 30px;
         }
-        pre {
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            background: #282c34;
-            color: #abb2bf;
-            padding: 15px;
-            border-radius: 5px;
-            overflow-x: auto;
-        }
-        .tabs {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #eee;
-        }
+        .tabs { display: flex; gap: 5px; margin-bottom: 30px; border-bottom: 2px solid #e2e8f0; }
         .tab {
-            padding: 10px 20px;
+            padding: 15px 30px;
             cursor: pointer;
+            background: transparent;
+            border: none;
+            color: #718096;
+            font-size: 1em;
+            font-weight: 600;
             border-bottom: 3px solid transparent;
         }
-        .tab.active {
-            border-bottom-color: #ff6b6b;
-            color: #ff6b6b;
+        .tab:hover { color: #667eea; }
+        .tab.active { color: #667eea; border-bottom-color: #667eea; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .input-group { margin-bottom: 25px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #2d3748; }
+        input[type="url"], input[type="number"], textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1em;
         }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-        .format-options {
-            display: flex;
-            gap: 15px;
-            margin: 10px 0;
-        }
-        .format-options label {
+        input:focus, textarea:focus { outline: none; border-color: #667eea; }
+        textarea { min-height: 100px; font-family: monospace; resize: vertical; }
+        .format-options { display: flex; gap: 15px; flex-wrap: wrap; margin-top: 10px; }
+        .checkbox-label {
             display: flex;
             align-items: center;
-            font-weight: normal;
-            margin-bottom: 0;
+            cursor: pointer;
+            padding: 8px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
         }
-        .format-options input[type="checkbox"] {
-            width: auto;
-            margin-right: 5px;
+        .checkbox-label:hover { border-color: #667eea; background: #f7fafc; }
+        .checkbox-label input[type="checkbox"] { width: auto; margin-right: 8px; }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
         }
+        button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4); }
+        button:disabled { background: #cbd5e0; cursor: not-allowed; transform: none; }
+        .loading { text-align: center; padding: 20px; color: #667eea; }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .result {
+            margin-top: 30px;
+            padding: 25px;
+            background: #f7fafc;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        pre {
+            background: #1a202c;
+            color: #a0aec0;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .error { background: #fff5f5; border-left: 4px solid #f56565; color: #c53030; padding: 15px; border-radius: 8px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔥 Firecrawl Playground</h1>
-        <div class="port-info">
-            <strong>Ollama Model:</strong> gpt-oss:20b | <strong>Embeddings:</strong> nomic-embed-text:v1.5
+        <h1>🔥 Firecrawl</h1>
+        <p class="subtitle">Web Scraping with Ollama AI</p>
+        <div class="info-banner">
+            <strong>Model:</strong> gpt-oss:20b | <strong>Note:</strong> Extract feature uses Ollama for AI extraction
         </div>
         <div class="tabs">
-            <div class="tab active" onclick="switchTab('scrape')">Scrape</div>
-            <div class="tab" onclick="switchTab('crawl')">Crawl</div>
-            <div class="tab" onclick="switchTab('map')">Map</div>
+            <button class="tab active" onclick="switchTab('scrape')">Scrape</button>
+            <button class="tab" onclick="switchTab('crawl')">Crawl</button>
+            <button class="tab" onclick="switchTab('map')">Map</button>
         </div>
         <div id="scrape-tab" class="tab-content active">
             <div class="input-group">
-                <label for="scrape-url">URL to Scrape:</label>
+                <label>URL to Scrape:</label>
                 <input type="url" id="scrape-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
             </div>
             <div class="input-group">
                 <label>Formats:</label>
                 <div class="format-options">
-                    <label><input type="checkbox" id="format-markdown" checked> Markdown</label>
-                    <label><input type="checkbox" id="format-extract"> Extract (LLM)</label>
-                    <label><input type="checkbox" id="format-screenshot"> Screenshot</label>
+                    <label class="checkbox-label"><input type="checkbox" id="format-markdown" checked> Markdown</label>
+                    <label class="checkbox-label"><input type="checkbox" id="format-html"> HTML</label>
+                    <label class="checkbox-label"><input type="checkbox" id="format-screenshot"> Screenshot</label>
                 </div>
             </div>
-            <div class="input-group" id="extract-options" style="display:none;">
-                <label for="extract-prompt">Extract Prompt:</label>
-                <textarea id="extract-prompt" placeholder="What to extract...">Extract the company name, main services, and contact information</textarea>
-            </div>
-            <button onclick="scrapeUrl()">Scrape URL</button>
+            <button onclick="scrapeUrl()">Scrape</button>
         </div>
         <div id="crawl-tab" class="tab-content">
             <div class="input-group">
-                <label for="crawl-url">URL to Crawl:</label>
+                <label>URL to Crawl:</label>
                 <input type="url" id="crawl-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
             </div>
             <div class="input-group">
-                <label for="crawl-limit">Page Limit:</label>
+                <label>Page Limit:</label>
                 <input type="number" id="crawl-limit" value="5" min="1" max="50">
             </div>
-            <button onclick="crawlUrl()">Start Crawl</button>
+            <button onclick="crawlUrl()">Crawl</button>
         </div>
         <div id="map-tab" class="tab-content">
             <div class="input-group">
-                <label for="map-url">URL to Map:</label>
+                <label>URL to Map:</label>
                 <input type="url" id="map-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
             </div>
-            <button onclick="mapUrl()">Map Website</button>
+            <button onclick="mapUrl()">Map</button>
+        </div>
+        <div id="loading" class="loading" style="display:none;">
+            <div class="spinner"></div>
+            <p>Processing...</p>
         </div>
         <div id="result" class="result" style="display:none;">
             <h3>Result:</h3>
@@ -250,9 +196,6 @@ RUN cat > /var/www/html/index.html << 'PLAYHTML'
     </div>
     <script>
         const API_BASE = window.location.origin;
-        document.getElementById('format-extract').addEventListener('change', function() {
-            document.getElementById('extract-options').style.display = this.checked ? 'block' : 'none';
-        });
         function switchTab(tab) {
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -261,30 +204,29 @@ RUN cat > /var/www/html/index.html << 'PLAYHTML'
         }
         async function scrapeUrl() {
             const url = document.getElementById('scrape-url').value;
-            if (!url) return alert('Enter a URL');
+            if (!url) return alert('Enter URL');
             const formats = [];
             if (document.getElementById('format-markdown').checked) formats.push('markdown');
-            if (document.getElementById('format-extract').checked) formats.push('extract');
+            if (document.getElementById('format-html').checked) formats.push('html');
             if (document.getElementById('format-screenshot').checked) formats.push('screenshot');
-            const body = { url, formats };
-            if (formats.includes('extract')) {
-                body.extract = { prompt: document.getElementById('extract-prompt').value };
-            }
-            await makeRequest('/v1/scrape', body);
+            await makeRequest('/v1/scrape', { url, formats });
         }
         async function crawlUrl() {
             const url = document.getElementById('crawl-url').value;
-            if (!url) return alert('Enter a URL');
+            if (!url) return alert('Enter URL');
             await makeRequest('/v1/crawl', { url, limit: parseInt(document.getElementById('crawl-limit').value) });
         }
         async function mapUrl() {
             const url = document.getElementById('map-url').value;
-            if (!url) return alert('Enter a URL');
+            if (!url) return alert('Enter URL');
             await makeRequest('/v1/map', { url });
         }
         async function makeRequest(endpoint, body) {
+            const loading = document.getElementById('loading');
             const result = document.getElementById('result');
             const content = document.getElementById('result-content');
+            loading.style.display = 'block';
+            result.style.display = 'none';
             try {
                 const response = await fetch(API_BASE + endpoint, {
                     method: 'POST',
@@ -292,11 +234,13 @@ RUN cat > /var/www/html/index.html << 'PLAYHTML'
                     body: JSON.stringify(body)
                 });
                 const data = await response.json();
+                loading.style.display = 'none';
                 result.style.display = 'block';
                 content.textContent = JSON.stringify(data, null, 2);
             } catch (error) {
+                loading.style.display = 'none';
                 result.style.display = 'block';
-                content.textContent = 'Error: ' + error.message;
+                content.innerHTML = '<div class="error">Error: ' + error.message + '</div>';
             }
         }
     </script>
@@ -304,12 +248,12 @@ RUN cat > /var/www/html/index.html << 'PLAYHTML'
 </html>
 PLAYHTML
 
-# Create startup script optimized for Coolify
-RUN cat > /app/start.sh << 'STARTEOF'
+# Create startup script
+RUN cat > /app/start.sh << 'EOF'
 #!/bin/bash
 set -e
 
-echo "Starting Firecrawl for Coolify deployment..."
+echo "Starting Firecrawl services..."
 
 # Start nginx
 nginx -g "daemon off;" &
@@ -319,36 +263,32 @@ echo "Waiting for Redis..."
 until redis-cli -u ${REDIS_URL:-redis://redis:6379} ping 2>/dev/null; do
   sleep 2
 done
+echo "Redis connected"
 
 # Start API
 cd /app/firecrawl/apps/api
 NODE_ENV=production PORT=3002 HOST=0.0.0.0 \
   PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-  node dist/src/index.js &
+  node dist/src/index.js > /app/logs/api.log 2>&1 &
 
 # Wait for API
 echo "Waiting for API..."
 until nc -z localhost 3002; do sleep 2; done
+echo "API ready"
 
 # Start Worker
 NODE_ENV=production IS_WORKER_PROCESS=true PORT=3005 \
   PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-  node dist/src/services/queue-worker.js &
+  node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
 
-# Start MCP
-cd /app/mcp
-NODE_ENV=production MCP_PORT=3006 \
-  FIRECRAWL_API_URL=http://127.0.0.1:3002 \
-  node index.js &
-
-echo "All services started!"
+echo "All services started"
 wait
-STARTEOF
+EOF
 
 RUN chmod +x /app/start.sh
 
-# Configure nginx for Coolify (single port)
-RUN cat > /etc/nginx/sites-available/default << 'NGINXEOF'
+# Configure nginx
+RUN cat > /etc/nginx/sites-available/default << 'EOF'
 server {
     listen 80;
     root /var/www/html;
@@ -375,7 +315,7 @@ server {
         proxy_set_header Host $host;
     }
 }
-NGINXEOF
+EOF
 
 RUN mkdir -p /app/logs
 
@@ -387,7 +327,7 @@ ENV NODE_ENV=production \
 
 EXPOSE 80
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=90s \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s \
     CMD nc -z localhost 80 && nc -z localhost 3002 || exit 1
 
 CMD ["/app/start.sh"]
