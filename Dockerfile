@@ -2,12 +2,13 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 
 WORKDIR /app
 
+# Install system dependencies including Rust
 RUN apt-get update && apt-get install -y \
     curl git build-essential redis-tools nginx chromium-browser \
     ca-certificates fonts-liberation netcat-openbsd pkg-config libssl-dev \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g pnpm@9.13.0 napi-cli \
+    && npm install -g pnpm@9.13.0 \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -26,8 +27,8 @@ WORKDIR /app/firecrawl/apps/api
 RUN pnpm install --frozen-lockfile && pnpm run build
 
 # Copy playground HTML
-RUN mkdir -p /var/www/html && \
-#COPY docker/playground.html /var/www/html/index.html 2>/dev/null || \
+RUN mkdir -p /var/www/html
+COPY docker/playground.html /var/www/html/index.html 2>/dev/null || \
     cat > /var/www/html/index.html << 'PLAYHTML'
 <!DOCTYPE html>
 <html lang="en">
