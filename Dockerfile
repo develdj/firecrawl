@@ -2,6 +2,12 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository -y ppa:xtrade/app \
+    && apt-get update \
+    && apt-get install -y chromium-browser \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Install system dependencies including Rust
 RUN apt-get update && apt-get install -y \
     curl git build-essential redis-tools nginx chromium-browser \
