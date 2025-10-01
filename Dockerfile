@@ -8,8 +8,12 @@ RUN apt-get update && apt-get install -y \
     curl git build-essential python3 g++ make \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g pnpm@9.13.0 \
-    && npm install -g napi-cli
+    && npm install -g pnpm@9.13.0 @napi-rs/cli \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+# Add Rust to PATH
+ENV PATH="/root/.cargo/bin:${PATH}"
+
 
 # Clone Firecrawl and build API
 RUN git clone https://github.com/develdj/firecrawl.git /build/firecrawl
