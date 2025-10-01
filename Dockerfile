@@ -14,11 +14,12 @@ RUN apt-get update && apt-get install -y \
 # Add Rust to PATH
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN pnpm add -D husky
 # Clone Firecrawl and build API
 RUN git clone https://github.com/develdj/firecrawl.git /build/firecrawl
 WORKDIR /build/firecrawl/apps/api
-RUN pnpm install --frozen-lockfile && pnpm run build
+
+# Disable husky in Docker (no git hooks needed)
+RUN HUSKY=0 pnpm install --frozen-lockfile && pnpm run build
 
 # Stage 2: Runtime
 FROM dustynv/cuda-python:r36.4.0-cu128-24.04
@@ -38,20 +39,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy Firecrawl build artifacts from builder
 COPY --from=builder /build/firecrawl /app/firecrawl
-
-# Install Rust (optional, if your app uses native Rust modules)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Configure pip for Jetson AI Lab repo
-RUN pip3 config set global.extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu129/+simple/
-
-# Clone Firecrawl
-RUN git clone https://github.com/mendableai/firecrawl.git /app/firecrawl
-
-# Build Firecrawl API
-WORKDIR /app/firecrawl/apps/api
-RUN pnpm install --frozen-lockfile && pnpm run build
 
 # Prepare HTML playground
 RUN mkdir -p /var/www/html
