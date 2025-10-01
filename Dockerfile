@@ -44,16 +44,71 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Configure pip for Jetson AI Lab repo
 RUN pip3 config set global.extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu129/+simple/
 
-# Copy playground HTML
+# Clone Firecrawl
+RUN git clone https://github.com/mendableai/firecrawl.git /app/firecrawl
+
+# Build Firecrawl API
+WORKDIR /app/firecrawl/apps/api
+RUN pnpm install --frozen-lockfile && pnpm run build
+
+# Prepare HTML playground
 RUN mkdir -p /var/www/html
 COPY docker/playground.html /var/www/html/index.html
 
-# Startup script
-COPY docker/start.sh /app/start.sh
+# Create startup script
+RUN mkdir -p /app/logs
+RUN cat > /app/start.sh << 'EOF'
+#!/bin/bash
+set -e
+echo "Starting Firecrawl services..."
+nginx -g "daemon off;" &
+echo "Waiting for Redis..."
+until redis-cli -u ${REDIS_URL:-redis://redis:6379} ping 2>/dev/null; do sleep 2; done
+echo "Redis connected"
+cd /app/firecrawl/apps/api
+NODE_ENV=production PORT=3002 HOST=0.0.0.0 \
+  PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+  node dist/src/index.js > /app/logs/api.log 2>&1 &
+echo "Waiting for API..."
+until nc -z localhost 3002; do sleep 2; done
+echo "API ready"
+NODE_ENV=production IS_WORKER_PROCESS=true PORT=3005 \
+  PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+  node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
+echo "All services started"
+wait
+EOF
 RUN chmod +x /app/start.sh
 
 # Configure nginx
-COPY docker/nginx.conf /etc/nginx/sites-available/default
+RUN cat > /etc/nginx/sites-available/default << 'EOF'
+server {
+    listen 80;
+    root /var/www/html;
+    client_max_body_size 50M;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location /v1/ {
+        proxy_pass http://127.0.0.1:3002/v1/;
+        proxy_buffering off;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_connect_timeout 120s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+    }
+
+    location /admin/ {
+        proxy_pass http://127.0.0.1:3002/admin/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+    }
+}
+EOF
 
 ENV NODE_ENV=production \
     NODE_OPTIONS="--max-old-space-size=4096" \
