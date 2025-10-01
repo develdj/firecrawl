@@ -1,7 +1,7 @@
 FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 
 WORKDIR /app
-RUN add-apt-repository --no-update ppa:xtrade/app -y
+
 # Install system dependencies including Rust
 RUN apt-get update && apt-get install -y \
     curl git build-essential redis-tools nginx chromium-browser \
@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Add Rust to PATH
 ENV PATH="/root/.cargo/bin:${PATH}"
