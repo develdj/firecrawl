@@ -1,7 +1,7 @@
 FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 
 WORKDIR /app
-add-apt-repository ppa:xtrade/app -y
+RUN add-apt-repository ppa:xtrade/app -y
 # Install system dependencies including Rust
 RUN apt-get update && apt-get install -y \
     curl git build-essential redis-tools nginx chromium-browser \
