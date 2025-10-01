@@ -2,19 +2,29 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 
 WORKDIR /app
 
-FROM dustynv/cuda-python:r36.4.0-cu128-24.04
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl wget gnupg ca-certificates fonts-liberation \
+    git build-essential redis-tools nginx python3 g++ make \
+    netcat-openbsd pkg-config libssl-dev software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# Install Chromium, Node.js, Rust, and other dependencies
-RUN apt-get update && apt-get install -y software-properties-common curl git build-essential redis-tools nginx \
-    python3 g++ make ca-certificates fonts-liberation netcat-openbsd pkg-config libssl-dev \
-    && add-apt-repository -y ppa:xtrade/app \
+# Add Google Chrome repo (stable) and install Chrome
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
-    && apt-get install -y chromium-browser nodejs \
+    && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js, pnpm, napi-cli
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && npm install -g pnpm napi-cli \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && echo 'export PATH=$HOME/.cargo/bin:$PATH' >> /root/.bashrc
 
 # Add Rust to PATH
 ENV PATH="/root/.cargo/bin:${PATH}"
