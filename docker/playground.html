@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firecrawl Playground</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #2d3748;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #718096;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .info-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        
+        .info-banner h3 {
+            margin-bottom: 10px;
+        }
+        
+        .info-item {
+            display: inline-block;
+            margin-right: 20px;
+            padding: 5px 10px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .tab {
+            padding: 15px 30px;
+            cursor: pointer;
+            background: transparent;
+            border: none;
+            color: #718096;
+            font-size: 1em;
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .tab:hover {
+            color: #667eea;
+        }
+        
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .input-group {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2d3748;
+            font-size: 0.95em;
+        }
+        
+        input[type="url"],
+        input[type="number"],
+        textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            min-height: 100px;
+            font-family: 'Courier New', monospace;
+            resize: vertical;
+        }
+        
+        .format-options {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 8px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        
+        .checkbox-label:hover {
+            border-color: #667eea;
+            background: #f7fafc;
+        }
+        
+        .checkbox-label input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+            cursor: pointer;
+        }
+        
+        .checkbox-label input[type="checkbox"]:checked + span {
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+            font-style: italic;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .result {
+            margin-top: 30px;
+            padding: 25px;
+            background: #f7fafc;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .result h3 {
+            color: #2d3748;
+            margin-bottom: 15px;
+        }
+        
+        pre {
+            background: #1a202c;
+            color: #a0aec0;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        
+        .error {
+            background: #fff5f5;
+            border-left: 4px solid #f56565;
+            color: #c53030;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        
+        .success {
+            background: #f0fff4;
+            border-left: 4px solid #48bb78;
+            color: #22543d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔥 Firecrawl Playground</h1>
+        <p class="subtitle">Web Scraping & Crawling with AI-Powered Extraction</p>
+        
+        <div class="info-banner">
+            <h3>Configuration</h3>
+            <span class="info-item">AI Model: gpt-oss:20b</span>
+            <span class="info-item">Embeddings: nomic-embed-text:v1.5</span>
+            <span class="info-item">Platform: Jetson Orin Nano</span>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('scrape')">Scrape</button>
+            <button class="tab" onclick="switchTab('crawl')">Crawl</button>
+            <button class="tab" onclick="switchTab('map')">Map</button>
+        </div>
+
+        <!-- Scrape Tab -->
+        <div id="scrape-tab" class="tab-content active">
+            <div class="input-group">
+                <label for="scrape-url">URL to Scrape:</label>
+                <input type="url" id="scrape-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
+            </div>
+
+            <div class="input-group">
+                <label>Output Formats:</label>
+                <div class="format-options">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="format-markdown" checked>
+                        <span>Markdown</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="format-html">
+                        <span>HTML</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="format-rawHtml">
+                        <span>Raw HTML</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="format-extract">
+                        <span>AI Extract</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="format-screenshot">
+                        <span>Screenshot</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="input-group" id="extract-options" style="display:none;">
+                <label for="extract-prompt">AI Extraction Prompt:</label>
+                <textarea id="extract-prompt" placeholder="Describe what information to extract...">Extract the company name, main services offered, and contact information from this page.</textarea>
+            </div>
+
+            <div class="input-group">
+                <label for="timeout">Timeout (milliseconds):</label>
+                <input type="number" id="timeout" value="120000" min="10000" max="300000" step="10000">
+            </div>
+
+            <button onclick="scrapeUrl()" id="scrape-btn">Scrape URL</button>
+        </div>
+
+        <!-- Crawl Tab -->
+        <div id="crawl-tab" class="tab-content">
+            <div class="input-group">
+                <label for="crawl-url">Starting URL to Crawl:</label>
+                <input type="url" id="crawl-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
+            </div>
+
+            <div class="input-group">
+                <label for="crawl-limit">Maximum Pages to Crawl:</label>
+                <input type="number" id="crawl-limit" value="5" min="1" max="50">
+            </div>
+
+            <div class="input-group">
+                <label for="max-depth">Maximum Depth:</label>
+                <input type="number" id="max-depth" value="2" min="1" max="5">
+            </div>
+
+            <button onclick="crawlUrl()" id="crawl-btn">Start Crawl</button>
+        </div>
+
+        <!-- Map Tab -->
+        <div id="map-tab" class="tab-content">
+            <div class="input-group">
+                <label for="map-url">Website URL to Map:</label>
+                <input type="url" id="map-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
+            </div>
+
+            <button onclick="mapUrl()" id="map-btn">Generate Site Map</button>
+        </div>
+
+        <div id="loading" class="loading" style="display:none;">
+            <div class="spinner"></div>
+            <p>Processing your request... This may take a moment.</p>
+        </div>
+        
+        <div id="result" class="result" style="display:none;">
+            <h3>Results:</h3>
+            <pre id="result-content"></pre>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        // Toggle extract options visibility
+        document.getElementById('format-extract').addEventListener('change', function() {
+            document.getElementById('extract-options').style.display = 
+                this.checked ? 'block' : 'none';
+        });
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        async function scrapeUrl() {
+            const url = document.getElementById('scrape-url').value;
+            const timeout = parseInt(document.getElementById('timeout').value);
+            
+            if (!url) {
+                showError('Please enter a URL to scrape');
+                return;
+            }
+
+            // Get selected formats
+            const formats = [];
+            if (document.getElementById('format-markdown').checked) formats.push('markdown');
+            if (document.getElementById('format-html').checked) formats.push('html');
+            if (document.getElementById('format-rawHtml').checked) formats.push('rawHtml');
+            if (document.getElementById('format-extract').checked) formats.push('extract');
+            if (document.getElementById('format-screenshot').checked) formats.push('screenshot');
+
+            if (formats.length === 0) {
+                showError('Please select at least one output format');
+                return;
+            }
+
+            const body = {
+                url,
+                formats,
+                timeout
+            };
+
+            // Add extract configuration if needed
+            if (formats.includes('extract')) {
+                const prompt = document.getElementById('extract-prompt').value;
+                if (!prompt.trim()) {
+                    showError('Please enter an extraction prompt');
+                    return;
+                }
+                body.extract = { prompt };
+            }
+
+            await makeRequest('/v1/scrape', body, 'scrape-btn');
+        }
+
+        async function crawlUrl() {
+            const url = document.getElementById('crawl-url').value;
+            const limit = parseInt(document.getElementById('crawl-limit').value);
+            const maxDepth = parseInt(document.getElementById('max-depth').value);
+
+            if (!url) {
+                showError('Please enter a URL to crawl');
+                return;
+            }
+
+            const body = {
+                url,
+                limit,
+                maxDepth
+            };
+
+            await makeRequest('/v1/crawl', body, 'crawl-btn');
+        }
+
+        async function mapUrl() {
+            const url = document.getElementById('map-url').value;
+            
+            if (!url) {
+                showError('Please enter a URL to map');
+                return;
+            }
+            
+            await makeRequest('/v1/map', { url }, 'map-btn');
+        }
+
+        async function makeRequest(endpoint, body, buttonId) {
+            const loading = document.getElementById('loading');
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('result-content');
+            const button = document.getElementById(buttonId);
+
+            // Show loading state
+            loading.style.display = 'block';
+            resultDiv.style.display = 'none';
+            button.disabled = true;
+
+            try {
+                const response = await fetch(API_BASE + endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(body)
+                });
+
+                const data = await response.json();
+
+                loading.style.display = 'none';
+                button.disabled = false;
+                resultDiv.style.display = 'block';
+
+                if (data.success === false || !response.ok) {
+                    resultContent.innerHTML = `<div class="error">
+                        <strong>Error:</strong> ${data.error || 'Request failed'}
+                        ${data.details ? '<br><br>' + JSON.stringify(data.details, null, 2) : ''}
+                    </div>`;
+                } else {
+                    resultContent.innerHTML = `<div class="success">✓ Request completed successfully</div>`;
+                    resultContent.innerHTML += '\n\n' + JSON.stringify(data, null, 2);
+                }
+
+            } catch (error) {
+                loading.style.display = 'none';
+                button.disabled = false;
+                resultDiv.style.display = 'block';
+                resultContent.innerHTML = `<div class="error">
+                    <strong>Request Failed:</strong><br>
+                    ${error.message}
+                </div>`;
+            }
+        }
+
+        function showError(message) {
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('result-content');
+            resultDiv.style.display = 'block';
+            resultContent.innerHTML = `<div class="error">${message}</div>`;
+        }
+    </script>
+</body>
+</html>
