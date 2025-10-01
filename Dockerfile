@@ -28,8 +28,14 @@ RUN pnpm install --frozen-lockfile && pnpm run build
 
 # Copy playground HTML
 RUN mkdir -p /var/www/html
-COPY docker/playground.html /var/www/html/index.html 2>/dev/null || \
-    cat > /var/www/html/index.html << 'PLAYHTML'
+COPY docker/playground.html /var/www/html/index.html 2>/dev/null 
+
+RUN mkdir -p /var/www/html \
+    && if [ -f docker/playground.html ]; then \
+         cp docker/playground.html /var/www/html/index.html; \
+       else \
+         cat > /var/www/html/index.html << 'PLAYHTML'
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
