@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 # Add Rust to PATH
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-
+RUN pnpm add -D husky
 # Clone Firecrawl and build API
 RUN git clone https://github.com/develdj/firecrawl.git /build/firecrawl
 WORKDIR /build/firecrawl/apps/api
