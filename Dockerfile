@@ -5,10 +5,13 @@ WORKDIR /app
 # Install system dependencies including Rust
 RUN apt-get update && apt-get install -y \
     curl git build-essential redis-tools nginx chromium-browser \
+    python3 \
+    g++ \
+    make \
     ca-certificates fonts-liberation netcat-openbsd pkg-config libssl-dev \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g pnpm@9.13.0 napi-cli \
+    && npm install -g pnpm@9.13.0 add -D napi-cli \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
