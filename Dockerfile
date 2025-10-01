@@ -1,12 +1,59 @@
 # Stage 1: Builder
 FROM dustynv/cuda-python:r36.4.0-cu128-24.04 AS builder
 
-WORKDIR /build
+# Set working directory
+WORKDIR /app
 
+# Install system dependencies including nginx and chromium
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    redis-tools \
+    ca-certificates \
+    fonts-liberation \
+    libasound2t64 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libc6 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libexpat1 \
+    libfontconfig1 \
+    libgbm1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libstdc++6 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrandr2 \
+    libxrender1 \
+    libxss1 \
+    libxtst6 \
+    lsb-release \
+    wget \
+    xdg-utils \
+    supervisor \
+    nginx \
+#    chromium-browser \
+    && rm -rf /var/lib/apt/lists/*
+
+    
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     curl git build-essential python3 g++ make \
-    postgresql-client libpq-dev \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g pnpm@9.13.0 @napi-rs/cli \
@@ -15,13 +62,13 @@ RUN apt-get update && apt-get install -y \
 # Add Rust to PATH
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+
 # Clone Firecrawl and build API
 RUN git clone https://github.com/develdj/firecrawl.git /build/firecrawl
 WORKDIR /build/firecrawl/apps/api
 
-# Install dependencies without running prepare scripts and then build
-RUN pnpm install --frozen-lockfile --ignore-scripts && \
-    pnpm run build
+
+RUN pnpm install --frozen-lockfile && pnpm run build
 
 # Stage 2: Runtime
 FROM dustynv/cuda-python:r36.4.0-cu128-24.04
@@ -36,17 +83,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
     libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
-    lsb-release wget xdg-utils ca-certificates nodejs \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    lsb-release wget xdg-utils ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/www/html
 
 # Copy Firecrawl build artifacts from builder
 COPY --from=builder /build/firecrawl /app/firecrawl
 
+# Install Rust (optional, if your app uses native Rust modules)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Configure pip for Jetson AI Lab repo
+RUN pip3 config set global.extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu129/+simple/
+
+# Clone Firecrawl
+RUN git clone https://github.com/mendableai/firecrawl.git /app/firecrawl
+
+# Build Firecrawl API
+WORKDIR /app/firecrawl/apps/api
+RUN pnpm install --frozen-lockfile && pnpm run build
+
 # Prepare HTML playground
 RUN mkdir -p /var/www/html
-COPY docker/playground.html /var/www/html/index.html 2>/dev/null || echo "<h1>Firecrawl API</h1>" > /var/www/html/index.html
+COPY docker/playground.html /var/www/html/index.html
 
 # Create startup script
 RUN mkdir -p /app/logs
