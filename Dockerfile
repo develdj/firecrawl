@@ -4,7 +4,7 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including nginx and chromium
+# Install system dependencies including nginx
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -47,7 +47,6 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     supervisor \
     nginx \
-    chromium-browser \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20.x and pnpm
@@ -81,53 +80,7 @@ RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/www/html
 # Copy playground.html to nginx directory
 COPY playground.html /var/www/html/index.html
 
-# Create browser service for port 3000 (internal only)
-RUN cat > /app/browser-service.js << 'EOF'
-const http = require('http');
-
-const server = http.createServer(async (req, res) => {
-  console.log(`Browser service received: ${req.method} ${req.url}`);
-  
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('OK');
-    return;
-  }
-
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Browser service ready on port 3000');
-});
-
-// MUST listen on port 3000 for Firecrawl compatibility
-server.listen(3000, '0.0.0.0', () => {
-  console.log('Browser service (playwright stub) listening on port 3000');
-});
-EOF
-
-# Create Bull Dashboard service
-RUN cat > /app/bull-dashboard.js << 'EOF'
-const express = require('express');
-const app = express();
-
-app.get('/health', (req, res) => {
-  res.send('Bull Dashboard OK');
-});
-
-app.get('/', (req, res) => {
-  res.send('Bull Dashboard - Check queues at /queues');
-});
-
-const PORT = 3003;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Bull Dashboard listening on port ${PORT}`);
-});
-EOF
-
-# Configure nginx to listen on port 80 (will be mapped to 3004 externally)
+# Configure nginx
 RUN cat > /etc/nginx/sites-available/default << 'EOF'
 server {
     listen 80 default_server;
@@ -138,12 +91,12 @@ server {
     
     server_name _;
     
-    # Serve playground UI
+    # Serve static files
     location / {
         try_files $uri $uri/ =404;
     }
     
-    # Proxy API requests to Firecrawl API on port 3002
+    # Proxy API requests to the Firecrawl API
     location /v1/ {
         proxy_pass http://localhost:3002/v1/;
         proxy_http_version 1.1;
@@ -154,10 +107,9 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 75s;
     }
     
+    # Health check endpoint
     location /health {
         access_log off;
         return 200 "healthy\n";
@@ -166,14 +118,13 @@ server {
 }
 EOF
 
-# Create supervisor configuration with all services
+# Create a supervisor configuration
 RUN cat > /etc/supervisor/conf.d/firecrawl.conf << 'EOF'
 [supervisord]
 nodaemon=true
 logfile=/var/log/supervisor/supervisord.log
 pidfile=/var/run/supervisord.pid
 
-# Nginx serves playground on port 80 (mapped to 3004 externally)
 [program:nginx]
 command=/usr/sbin/nginx -g "daemon off;"
 autostart=true
@@ -182,35 +133,14 @@ stdout_logfile=/var/log/supervisor/nginx.log
 stderr_logfile=/var/log/supervisor/nginx.log
 priority=1
 
-# Browser service on port 3000 (internal only)
-[program:browser-service]
-command=node /app/browser-service.js
-autostart=true
-autorestart=true
-stdout_logfile=/var/log/supervisor/browser.log
-stderr_logfile=/var/log/supervisor/browser.log
-environment=NODE_ENV="production"
-priority=5
-
-# Bull Dashboard on port 3003
-[program:bull-dashboard]
-command=node /app/bull-dashboard.js
-autostart=true
-autorestart=true
-stdout_logfile=/var/log/supervisor/bull-dashboard.log
-stderr_logfile=/var/log/supervisor/bull-dashboard.log
-environment=NODE_ENV="production"
-priority=8
-
 [program:redis-check]
 command=/bin/bash -c 'until redis-cli -h ${REDIS_HOST:-redis} ping; do echo "Waiting for Redis..."; sleep 2; done; echo "Redis ready"'
 autostart=true
 autorestart=false
 stdout_logfile=/var/log/supervisor/redis-check.log
 stderr_logfile=/var/log/supervisor/redis-check.log
-priority=10
+priority=2
 
-# Worker process on port 3005
 [program:firecrawl-worker]
 command=node dist/src/services/queue-worker.js
 directory=/app/firecrawl/apps/api
@@ -218,11 +148,10 @@ autostart=true
 autorestart=true
 stdout_logfile=/app/logs/worker.log
 stderr_logfile=/app/logs/worker-error.log
-environment=NODE_ENV="production",IS_WORKER_PROCESS="true",PLAYWRIGHT_MICROSERVICE_URL="http://localhost:3000",PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium-browser",PORT="3005",WORKER_PORT="3005"
-priority=20
+environment=NODE_ENV="production",IS_WORKER_PROCESS="true"
+priority=10
 startsecs=10
 
-# API on port 3002 (exposed externally)
 [program:firecrawl-api]
 command=node dist/src/index.js
 directory=/app/firecrawl/apps/api
@@ -230,24 +159,18 @@ autostart=true
 autorestart=true
 stdout_logfile=/app/logs/api.log
 stderr_logfile=/app/logs/api-error.log
-environment=NODE_ENV="production",PORT="3002",HOST="0.0.0.0",PLAYWRIGHT_MICROSERVICE_URL="http://localhost:3000",PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium-browser"
-priority=30
+environment=NODE_ENV="production",PORT="3002",HOST="0.0.0.0"
+priority=20
 startsecs=10
 EOF
 
-# Create health check script
+# Create a health check script
 RUN cat > /app/healthcheck.sh << 'EOF'
 #!/bin/bash
-# Check nginx (port 80 internal, 3004 external)
+# Check if nginx is responding
 curl -f http://localhost/health || exit 1
-# Check API (port 3002)
+# Check if API is responding
 curl -f http://localhost:3002/test || exit 1
-# Check browser service (port 3000 internal)
-curl -f http://localhost:3000/health || exit 1
-# Check Bull Dashboard (port 3003)
-curl -f http://localhost:3003/health || exit 1
-# Check worker if it exposes port 3005
-curl -f http://localhost:3005/health || true  # Don't fail if worker doesn't have health endpoint
 EOF
 RUN chmod +x /app/healthcheck.sh
 
@@ -255,25 +178,22 @@ RUN chmod +x /app/healthcheck.sh
 ENV NODE_ENV=production \
     PORT=3002 \
     HOST=0.0.0.0 \
-    WORKER_PORT=3005 \
     NUM_WORKERS_PER_QUEUE=8 \
     REDIS_HOST=redis \
     REDIS_URL=redis://redis:6379 \
     REDIS_RATE_LIMIT_URL=redis://redis:6379 \
     USE_DB_AUTHENTICATION=false \
-    PLAYWRIGHT_MICROSERVICE_URL=http://localhost:3000 \
+    PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000 \
     LOGGING_LEVEL=info \
     MAX_RAM=0.95 \
-    MAX_CPU=0.95 \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+    MAX_CPU=0.95
 
-# Expose API, nginx, bull dashboard, and worker ports
-EXPOSE 3002 80 3003 3005
+# Expose ports
+EXPOSE 80 3002
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD /app/healthcheck.sh
 
-# Start all services with supervisor
+# Use supervisor to manage all processes
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
