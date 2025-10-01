@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 # Clone Firecrawl and build API
 RUN git clone https://github.com/mendableai/firecrawl.git /build/firecrawl
 WORKDIR /build/firecrawl/apps/api
-RUN pnpm install --shamefully-hoist && pnpm run build
+RUN pnpm install && pnpm run build
 
 # Stage 2: Runtime
 FROM dustynv/cuda-python:r36.4.0-cu128-24.04
