@@ -51,7 +51,9 @@ services:
       - PORT=3002
       - HOST=0.0.0.0
       #- USE_DB_AUTHENTICATION=true
-      
+      # Database Configuration - ADD THIS
+      - DATABASE_URL=postgresql://firecrawl:firecrawl_password@postgres:5432/firecrawl
+    
       # Redis Configuration
       - REDIS_URL=redis://redis:6379
       - REDIS_RATE_LIMIT_URL=redis://redis:6379
