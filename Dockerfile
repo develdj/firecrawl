@@ -40,7 +40,7 @@ RUN npm install -g pnpm@9.13.0 @napi-rs/cli
 RUN pip3 config set global.extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu129/+simple/
 
 # ----------------------------------------------------------
-# Copy Firecrawl source (your fork)
+# Copy Firecrawl source (use your fork, not upstream)
 # ----------------------------------------------------------
 COPY . /app/firecrawl
 
@@ -54,10 +54,11 @@ RUN pnpm install --frozen-lockfile || true
 RUN pnpm rebuild || true
 RUN pnpm run build
 RUN pnpm prune --prod || true
+
 ENV NODE_ENV=production
 
 # ----------------------------------------------------------
-# Playground HTML
+# Prepare Playground HTML
 # ----------------------------------------------------------
 RUN mkdir -p /var/www/html
 COPY docker/playground.html /var/www/html/index.html
@@ -122,9 +123,9 @@ echo "Starting API server..."
 node dist/src/index.js > /app/logs/api.log 2>&1 &
 API_PID=$!
 
-# Start worker (ensure it does NOT bind to port 3002)
+# Start worker
 echo "Starting worker..."
-PORT=0 IS_WORKER_PROCESS=true node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
+IS_WORKER_PROCESS=true node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
 WORKER_PID=$!
 
 # Keep alive
@@ -146,18 +147,19 @@ EOF
 RUN chmod +x /app/start.sh
 
 # ----------------------------------------------------------
-# Configure Nginx
+# Configure Nginx for Playground on port 3004
 # ----------------------------------------------------------
+RUN sed -i 's/listen 80;/listen 3004;/' /etc/nginx/sites-available/default
 RUN cat > /etc/nginx/sites-available/default << 'EOF'
 server {
-    listen 80;
+    listen 3004;
     root /var/www/html;
     client_max_body_size 50M;
-    
+
     location / {
         try_files $uri $uri/ =404;
     }
-    
+
     location /v1/ {
         proxy_pass http://127.0.0.1:3002/v1/;
         proxy_buffering off;
@@ -168,7 +170,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
-    
+
     location /admin/ {
         proxy_pass http://127.0.0.1:3002/admin/;
         proxy_http_version 1.1;
@@ -181,7 +183,7 @@ server {
 EOF
 
 # ----------------------------------------------------------
-# Runtime env
+# Runtime environment
 # ----------------------------------------------------------
 ENV NODE_ENV=production \
     NODE_OPTIONS="--max-old-space-size=4096" \
@@ -189,9 +191,9 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-EXPOSE 80 3002 3003 3005
+EXPOSE 3002 3003 3004 3005
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD nc -z localhost 80 && nc -z localhost 3002 || exit 1
+    CMD nc -z localhost 3002 && nc -z localhost 3004 || exit 1
 
 CMD ["/app/start.sh"]
