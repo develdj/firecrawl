@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
     libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
-    lsb-release xdg-utils \
+    lsb-release xdg-utils postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20
@@ -59,21 +59,60 @@ COPY docker/playground.html /var/www/html/index.html
 # Create logs directory
 RUN mkdir -p /app/logs
 
-# Create startup script
+# Create startup script with DATABASE_URL auto-detection
 RUN cat > /app/start.sh << 'EOF'
 #!/bin/bash
 set -e
 
 echo "Starting Firecrawl services..."
 
+# Auto-detect DATABASE_URL if not set
+if [ -z "$DATABASE_URL" ]; then
+    echo "DATABASE_URL not set, attempting auto-detection..."
+    
+    # Try to find postgres container in the same network
+    POSTGRES_HOST=""
+    
+    # Check common Coolify postgres container names
+    for name in postgres postgres-swk4w8gkc0kwogccc8gw0k48 postgresql; do
+        if getent hosts $name > /dev/null 2>&1; then
+            POSTGRES_HOST=$name
+            echo "Found PostgreSQL at: $POSTGRES_HOST"
+            break
+        fi
+    done
+    
+    # If not found by name, try the IP from environment
+    if [ -z "$POSTGRES_HOST" ] && [ -n "$SERVICE_URL_POSTGRES" ]; then
+        POSTGRES_HOST=$(echo $SERVICE_URL_POSTGRES | sed 's/.*:\/\///' | cut -d: -f1)
+    fi
+    
+    # Default to common settings
+    if [ -z "$POSTGRES_HOST" ]; then
+        POSTGRES_HOST="10.0.7.2"
+        echo "Using fallback PostgreSQL host: $POSTGRES_HOST"
+    fi
+    
+    export DATABASE_URL="postgresql://firecrawl:firecrawl_password@${POSTGRES_HOST}:5432/firecrawl"
+    echo "Set DATABASE_URL to: postgresql://firecrawl:***@${POSTGRES_HOST}:5432/firecrawl"
+fi
+
+# Test database connection
+echo "Testing database connection..."
+until PGPASSWORD=firecrawl_password psql -h "$(echo $DATABASE_URL | sed 's/.*@//' | cut -d: -f1)" -U firecrawl -d firecrawl -c "SELECT 1" > /dev/null 2>&1; do
+    echo "Waiting for database to be ready..."
+    sleep 2
+done
+echo "Database connection successful!"
+
 # Start nginx in background
 nginx -g "daemon off;" &
 
 # Wait for Redis
 echo "Waiting for Redis..."
-REDIS_HOST=$(echo $REDIS_URL | sed 's/redis:\/\///' | cut -d: -f1)
-REDIS_PORT=$(echo $REDIS_URL | sed 's/redis:\/\///' | cut -d: -f2 | cut -d/ -f1)
-until redis-cli -h ${REDIS_HOST:-redis} -p ${REDIS_PORT:-6379} ping 2>/dev/null; do 
+REDIS_HOST=$(echo ${REDIS_URL:-redis://redis:6379} | sed 's/redis:\/\///' | cut -d: -f1)
+REDIS_PORT=$(echo ${REDIS_URL:-redis://redis:6379} | sed 's/redis:\/\///' | cut -d: -f2 | cut -d/ -f1)
+until redis-cli -h ${REDIS_HOST} -p ${REDIS_PORT} ping 2>/dev/null; do 
     echo "Redis not ready, waiting..."
     sleep 2
 done
@@ -87,13 +126,13 @@ NODE_ENV=production \
   PORT=3002 \
   HOST=0.0.0.0 \
   DATABASE_URL="${DATABASE_URL}" \
-  REDIS_URL="${REDIS_URL}" \
-  REDIS_RATE_LIMIT_URL="${REDIS_RATE_LIMIT_URL}" \
-  BULL_AUTH_KEY="${BULL_AUTH_KEY}" \
-  USE_DB_AUTHENTICATION="${USE_DB_AUTHENTICATION}" \
+  REDIS_URL="${REDIS_URL:-redis://redis:6379}" \
+  REDIS_RATE_LIMIT_URL="${REDIS_RATE_LIMIT_URL:-redis://redis:6379}" \
+  BULL_AUTH_KEY="${BULL_AUTH_KEY:-your-secure-password}" \
+  USE_DB_AUTHENTICATION="${USE_DB_AUTHENTICATION:-false}" \
   OLLAMA_BASE_URL="${OLLAMA_BASE_URL}" \
-  MODEL_NAME="${MODEL_NAME}" \
-  MODEL_EMBEDDING_NAME="${MODEL_EMBEDDING_NAME}" \
+  MODEL_NAME="${MODEL_NAME:-gpt-oss:20b}" \
+  MODEL_EMBEDDING_NAME="${MODEL_EMBEDDING_NAME:-nomic-embed-text:v1.5}" \
   SEARXNG_ENDPOINT="${SEARXNG_ENDPOINT}" \
   SEARXNG_ENGINES="${SEARXNG_ENGINES}" \
   SEARXNG_CATEGORIES="${SEARXNG_CATEGORIES}" \
@@ -123,13 +162,13 @@ NODE_ENV=production \
   IS_WORKER_PROCESS=true \
   PORT=3005 \
   DATABASE_URL="${DATABASE_URL}" \
-  REDIS_URL="${REDIS_URL}" \
-  REDIS_RATE_LIMIT_URL="${REDIS_RATE_LIMIT_URL}" \
-  BULL_AUTH_KEY="${BULL_AUTH_KEY}" \
-  USE_DB_AUTHENTICATION="${USE_DB_AUTHENTICATION}" \
+  REDIS_URL="${REDIS_URL:-redis://redis:6379}" \
+  REDIS_RATE_LIMIT_URL="${REDIS_RATE_LIMIT_URL:-redis://redis:6379}" \
+  BULL_AUTH_KEY="${BULL_AUTH_KEY:-your-secure-password}" \
+  USE_DB_AUTHENTICATION="${USE_DB_AUTHENTICATION:-false}" \
   OLLAMA_BASE_URL="${OLLAMA_BASE_URL}" \
-  MODEL_NAME="${MODEL_NAME}" \
-  MODEL_EMBEDDING_NAME="${MODEL_EMBEDDING_NAME}" \
+  MODEL_NAME="${MODEL_NAME:-gpt-oss:20b}" \
+  MODEL_EMBEDDING_NAME="${MODEL_EMBEDDING_NAME:-nomic-embed-text:v1.5}" \
   SEARXNG_ENDPOINT="${SEARXNG_ENDPOINT}" \
   SEARXNG_ENGINES="${SEARXNG_ENGINES}" \
   SEARXNG_CATEGORIES="${SEARXNG_CATEGORIES}" \
