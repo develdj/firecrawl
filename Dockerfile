@@ -40,7 +40,7 @@ RUN npm install -g pnpm@9.13.0 @napi-rs/cli
 RUN pip3 config set global.extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu129/+simple/
 
 # ----------------------------------------------------------
-# Copy Firecrawl source (use your fork, not upstream)
+# Copy Firecrawl source (your fork)
 # ----------------------------------------------------------
 COPY . /app/firecrawl
 
@@ -49,24 +49,15 @@ COPY . /app/firecrawl
 # ----------------------------------------------------------
 WORKDIR /app/firecrawl/apps/api
 
-# Install dependencies (dev first for build tools)
 ENV NODE_ENV=development
 RUN pnpm install --frozen-lockfile || true
-
-# Rebuild native modules
 RUN pnpm rebuild || true
-
-# Build the application
 RUN pnpm run build
-
-# Clean dev dependencies and reinstall only production deps
 RUN pnpm prune --prod || true
-
-# Switch back to production environment
 ENV NODE_ENV=production
 
 # ----------------------------------------------------------
-# Prepare Playground HTML
+# Playground HTML
 # ----------------------------------------------------------
 RUN mkdir -p /var/www/html
 COPY docker/playground.html /var/www/html/index.html
@@ -131,9 +122,9 @@ echo "Starting API server..."
 node dist/src/index.js > /app/logs/api.log 2>&1 &
 API_PID=$!
 
-# Start worker
+# Start worker (ensure it does NOT bind to port 3002)
 echo "Starting worker..."
-IS_WORKER_PROCESS=true node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
+PORT=0 IS_WORKER_PROCESS=true node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
 WORKER_PID=$!
 
 # Keep alive
@@ -152,7 +143,6 @@ while true; do
 done
 EOF
 
-# Make script executable
 RUN chmod +x /app/start.sh
 
 # ----------------------------------------------------------
@@ -191,7 +181,7 @@ server {
 EOF
 
 # ----------------------------------------------------------
-# Runtime environment
+# Runtime env
 # ----------------------------------------------------------
 ENV NODE_ENV=production \
     NODE_OPTIONS="--max-old-space-size=4096" \
