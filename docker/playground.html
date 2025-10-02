@@ -61,6 +61,23 @@
             border-radius: 5px;
             font-size: 0.9em;
         }
+
+        .auth-section {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+
+        .auth-section label {
+            font-size: 0.9em;
+            color: #4a5568;
+        }
+
+        .auth-section input {
+            margin-top: 5px;
+        }
         
         .tabs {
             display: flex;
@@ -111,6 +128,8 @@
         }
         
         input[type="url"],
+        input[type="text"],
+        input[type="password"],
         input[type="number"],
         textarea {
             width: 100%;
@@ -270,6 +289,11 @@
             <span class="info-item">Embeddings: nomic-embed-text:v1.5</span>
             <span class="info-item">Platform: Jetson Orin Nano</span>
         </div>
+
+        <div class="auth-section">
+            <label for="api-key">API Key (Optional - leave blank if USE_DB_AUTHENTICATION=false):</label>
+            <input type="password" id="api-key" placeholder="Enter API key if required">
+        </div>
         
         <div class="tabs">
             <button class="tab active" onclick="switchTab('scrape')">Scrape</button>
@@ -281,7 +305,7 @@
         <div id="scrape-tab" class="tab-content active">
             <div class="input-group">
                 <label for="scrape-url">URL to Scrape:</label>
-                <input type="url" id="scrape-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
+                <input type="url" id="scrape-url" placeholder="https://example.com" value="https://example.com">
             </div>
 
             <div class="input-group">
@@ -327,7 +351,7 @@
         <div id="crawl-tab" class="tab-content">
             <div class="input-group">
                 <label for="crawl-url">Starting URL to Crawl:</label>
-                <input type="url" id="crawl-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
+                <input type="url" id="crawl-url" placeholder="https://example.com" value="https://example.com">
             </div>
 
             <div class="input-group">
@@ -347,7 +371,7 @@
         <div id="map-tab" class="tab-content">
             <div class="input-group">
                 <label for="map-url">Website URL to Map:</label>
-                <input type="url" id="map-url" placeholder="https://example.com" value="https://www.firecrawl.dev">
+                <input type="url" id="map-url" placeholder="https://example.com" value="https://example.com">
             </div>
 
             <button onclick="mapUrl()" id="map-btn">Generate Site Map</button>
@@ -374,7 +398,6 @@
         });
 
         function switchTab(tabName) {
-            // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(content => {
                 content.classList.remove('active');
             });
@@ -382,9 +405,21 @@
                 tab.classList.remove('active');
             });
             
-            // Show selected tab
             document.getElementById(tabName + '-tab').classList.add('active');
             event.target.classList.add('active');
+        }
+
+        function getHeaders() {
+            const headers = {
+                'Content-Type': 'application/json',
+            };
+            
+            const apiKey = document.getElementById('api-key').value.trim();
+            if (apiKey) {
+                headers['Authorization'] = `Bearer ${apiKey}`;
+            }
+            
+            return headers;
         }
 
         async function scrapeUrl() {
@@ -396,7 +431,6 @@
                 return;
             }
 
-            // Get selected formats
             const formats = [];
             if (document.getElementById('format-markdown').checked) formats.push('markdown');
             if (document.getElementById('format-html').checked) formats.push('html');
@@ -415,7 +449,6 @@
                 timeout
             };
 
-            // Add extract configuration if needed
             if (formats.includes('extract')) {
                 const prompt = document.getElementById('extract-prompt').value;
                 if (!prompt.trim()) {
@@ -464,21 +497,29 @@
             const resultContent = document.getElementById('result-content');
             const button = document.getElementById(buttonId);
 
-            // Show loading state
             loading.style.display = 'block';
             resultDiv.style.display = 'none';
             button.disabled = true;
 
             try {
+                console.log('Making request to:', API_BASE + endpoint);
+                console.log('Request body:', body);
+
                 const response = await fetch(API_BASE + endpoint, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: getHeaders(),
                     body: JSON.stringify(body)
                 });
 
-                const data = await response.json();
+                console.log('Response status:', response.status);
+                
+                let data;
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    const text = await response.text();
+                    throw new Error(`Invalid JSON response: ${text.substring(0, 200)}`);
+                }
 
                 loading.style.display = 'none';
                 button.disabled = false;
@@ -486,8 +527,9 @@
 
                 if (data.success === false || !response.ok) {
                     resultContent.innerHTML = `<div class="error">
-                        <strong>Error:</strong> ${data.error || 'Request failed'}
-                        ${data.details ? '<br><br>' + JSON.stringify(data.details, null, 2) : ''}
+                        <strong>Error (${response.status}):</strong> ${data.error || 'Request failed'}
+                        ${data.details ? '<br><br><pre>' + JSON.stringify(data.details, null, 2) + '</pre>' : ''}
+                        ${data.message ? '<br><br>' + data.message : ''}
                     </div>`;
                 } else {
                     resultContent.innerHTML = `<div class="success">✓ Request completed successfully</div>`;
@@ -495,12 +537,21 @@
                 }
 
             } catch (error) {
+                console.error('Request error:', error);
                 loading.style.display = 'none';
                 button.disabled = false;
                 resultDiv.style.display = 'block';
                 resultContent.innerHTML = `<div class="error">
                     <strong>Request Failed:</strong><br>
                     ${error.message}
+                    <br><br>
+                    <strong>Troubleshooting:</strong>
+                    <ul>
+                        <li>Check browser console (F12) for details</li>
+                        <li>Verify the API is running: ${API_BASE}/v1/scrape</li>
+                        <li>Check if API key is required (set USE_DB_AUTHENTICATION env var)</li>
+                        <li>View container logs: docker logs firecrawl-app</li>
+                    </ul>
                 </div>`;
             }
         }
