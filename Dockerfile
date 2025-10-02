@@ -35,11 +35,22 @@ RUN git clone https://github.com/mendableai/firecrawl.git /app/firecrawl
 # Build Firecrawl API
 WORKDIR /app/firecrawl/apps/api
 
-# Install dependencies with proper native module support
-# Skip optional msgpackr-extract to avoid compilation issues
-RUN pnpm install --frozen-lockfile --ignore-scripts || true
+# Install dependencies including dev dependencies for build
+# We need NODE_ENV=development to get TypeScript and other build tools
+ENV NODE_ENV=development
+RUN pnpm install --frozen-lockfile || true
+
+# Rebuild native modules
 RUN pnpm rebuild || true
+
+# Build the application
 RUN pnpm run build
+
+# Clean dev dependencies and reinstall only production deps
+RUN pnpm prune --prod || true
+
+# Switch back to production environment
+ENV NODE_ENV=production
 
 # Prepare HTML playground
 RUN mkdir -p /var/www/html
