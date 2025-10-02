@@ -43,7 +43,7 @@ services:
     ports:
       - "3002:3002"  # API
       - "3003:3003"  # Bull Dashboard
-      - "80:80"    # Playground UI
+      - "3004:80"    # Playground UI
       - "3005:3005"  # Worker
     environment:
       # Core Configuration
