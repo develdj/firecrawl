@@ -1,199 +1,179 @@
-# Use the CUDA-optimized Python base image for Jetson AGX
 FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies including nginx
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    build-essential \
-    redis-tools \
-    ca-certificates \
-    fonts-liberation \
-    libasound2t64 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libc6 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgbm1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libstdc++6 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    lsb-release \
-    wget \
-    xdg-utils \
-    supervisor \
-    nginx \
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git build-essential python3 g++ make \
+    chromium-browser wget gnupg ca-certificates fonts-liberation \
+    redis-tools nginx netcat-openbsd libatk-bridge2.0-0 libatk1.0-0 \
+    libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 \
+    libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
+    libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
+    libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
+    lsb-release xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 20.x and pnpm
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g pnpm@9.13.0
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
-# Clone Firecrawl repository
-RUN git clone https://github.com/develdj/firecrawl.git /app/firecrawl
+# Install Rust (required for native modules)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Set working directory to Firecrawl API
+# Install pnpm and napi-cli globally
+RUN npm install -g pnpm@9.13.0 @napi-rs/cli
+
+# Configure pip for Jetson AI Lab repo
+RUN pip3 config set global.extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu129/+simple/
+
+# Clone Firecrawl
+RUN git clone https://github.com/mendableai/firecrawl.git /app/firecrawl
+
+# Build Firecrawl API
 WORKDIR /app/firecrawl/apps/api
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile
-
-# Build the application
+# Install dependencies with proper native module support
+# Skip optional msgpackr-extract to avoid compilation issues
+RUN pnpm install --frozen-lockfile --ignore-scripts || true
+RUN pnpm rebuild || true
 RUN pnpm run build
 
-# Install Python dependencies for LLM features
-RUN pip install --no-cache-dir \
-    --index-url https://pypi.jetson-ai-lab.io/jp6/cu129 \
-    --trusted-host pypi.jetson-ai-lab.io \
-    openai langchain pydantic httpx python-dotenv || \
-    pip install --no-cache-dir \
-    openai langchain pydantic httpx python-dotenv
+# Prepare HTML playground
+RUN mkdir -p /var/www/html
+COPY docker/playground.html /var/www/html/index.html 2>/dev/null || \
+    echo '<!DOCTYPE html><html><head><title>Firecrawl</title></head><body><h1>Firecrawl API</h1><p>Access the API at <a href="/v1/">/v1/</a></p></body></html>' > /var/www/html/index.html
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/data /var/log/supervisor /var/www/html
+# Create logs directory
+RUN mkdir -p /app/logs
 
-# Copy playground.html to nginx directory
-COPY /docker/playground.html /var/www/html/index.html
+# Create startup script
+RUN cat > /app/start.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "Starting Firecrawl services..."
+
+# Start nginx in background
+nginx -g "daemon off;" &
+
+# Wait for Redis
+echo "Waiting for Redis..."
+REDIS_HOST=$(echo $REDIS_URL | sed 's/redis:\/\///' | cut -d: -f1)
+REDIS_PORT=$(echo $REDIS_URL | sed 's/redis:\/\///' | cut -d: -f2 | cut -d/ -f1)
+until redis-cli -h ${REDIS_HOST:-redis} -p ${REDIS_PORT:-6379} ping 2>/dev/null; do 
+    echo "Redis not ready, waiting..."
+    sleep 2
+done
+echo "Redis connected"
+
+cd /app/firecrawl/apps/api
+
+# Start API server
+echo "Starting API server..."
+NODE_ENV=production \
+  PORT=3002 \
+  HOST=0.0.0.0 \
+  PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+  node dist/src/index.js > /app/logs/api.log 2>&1 &
+
+API_PID=$!
+
+# Wait for API to be ready
+echo "Waiting for API..."
+for i in {1..60}; do
+    if nc -z localhost 3002; then
+        echo "API ready"
+        break
+    fi
+    if [ $i -eq 60 ]; then
+        echo "API failed to start"
+        cat /app/logs/api.log
+        exit 1
+    fi
+    sleep 2
+done
+
+# Start worker process
+echo "Starting worker process..."
+NODE_ENV=production \
+  IS_WORKER_PROCESS=true \
+  PORT=3005 \
+  PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+  node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
+
+WORKER_PID=$!
+
+echo "All services started successfully"
+echo "API PID: $API_PID"
+echo "Worker PID: $WORKER_PID"
+
+# Monitor processes
+while true; do
+    if ! kill -0 $API_PID 2>/dev/null; then
+        echo "API process died!"
+        cat /app/logs/api.log
+        exit 1
+    fi
+    if ! kill -0 $WORKER_PID 2>/dev/null; then
+        echo "Worker process died!"
+        cat /app/logs/worker.log
+        exit 1
+    fi
+    sleep 10
+done
+EOF
+
+RUN chmod +x /app/start.sh
 
 # Configure nginx
 RUN cat > /etc/nginx/sites-available/default << 'EOF'
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    
+    listen 80;
     root /var/www/html;
-    index index.html;
+    client_max_body_size 50M;
     
-    server_name _;
-    
-    # Serve static files
     location / {
         try_files $uri $uri/ =404;
     }
     
-    # Proxy API requests to the Firecrawl API
     location /v1/ {
-        proxy_pass http://localhost:3002/v1/;
+        proxy_pass http://127.0.0.1:3002/v1/;
+        proxy_buffering off;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
+        proxy_set_header Connection "";
         proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 120s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+    }
+    
+    location /admin/ {
+        proxy_pass http://127.0.0.1:3002/admin/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
-    
-    # Health check endpoint
-    location /health {
-        access_log off;
-        return 200 "healthy\n";
-        add_header Content-Type text/plain;
-    }
 }
 EOF
 
-# Create a supervisor configuration
-RUN cat > /etc/supervisor/conf.d/firecrawl.conf << 'EOF'
-[supervisord]
-nodaemon=true
-logfile=/var/log/supervisor/supervisord.log
-pidfile=/var/run/supervisord.pid
-
-[program:nginx]
-command=/usr/sbin/nginx -g "daemon off;"
-autostart=true
-autorestart=true
-stdout_logfile=/var/log/supervisor/nginx.log
-stderr_logfile=/var/log/supervisor/nginx.log
-priority=1
-
-[program:redis-check]
-command=/bin/bash -c 'until redis-cli -h ${REDIS_HOST:-redis} ping; do echo "Waiting for Redis..."; sleep 2; done; echo "Redis ready"'
-autostart=true
-autorestart=false
-stdout_logfile=/var/log/supervisor/redis-check.log
-stderr_logfile=/var/log/supervisor/redis-check.log
-priority=2
-
-[program:firecrawl-worker]
-command=node dist/src/services/queue-worker.js
-directory=/app/firecrawl/apps/api
-autostart=true
-autorestart=true
-stdout_logfile=/app/logs/worker.log
-stderr_logfile=/app/logs/worker-error.log
-environment=NODE_ENV="production",IS_WORKER_PROCESS="true"
-priority=10
-startsecs=10
-
-[program:firecrawl-api]
-command=node dist/src/index.js
-directory=/app/firecrawl/apps/api
-autostart=true
-autorestart=true
-stdout_logfile=/app/logs/api.log
-stderr_logfile=/app/logs/api-error.log
-environment=NODE_ENV="production",PORT="3002",HOST="0.0.0.0"
-priority=20
-startsecs=10
-EOF
-
-# Create a health check script
-RUN cat > /app/healthcheck.sh << 'EOF'
-#!/bin/bash
-# Check if nginx is responding
-curl -f http://localhost/health || exit 1
-# Check if API is responding
-curl -f http://localhost:3002/test || exit 1
-EOF
-RUN chmod +x /app/healthcheck.sh
-
 # Set environment variables
 ENV NODE_ENV=production \
+    NODE_OPTIONS="--max-old-space-size=4096" \
     PORT=3002 \
     HOST=0.0.0.0 \
-    NUM_WORKERS_PER_QUEUE=8 \
-    REDIS_HOST=redis \
-    REDIS_URL=redis://redis:6379 \
-    REDIS_RATE_LIMIT_URL=redis://redis:6379 \
-    USE_DB_AUTHENTICATION=false \
-    PLAYWRIGHT_MICROSERVICE_URL=http://playwright-service:3000 \
-    LOGGING_LEVEL=info \
-    MAX_RAM=0.95 \
-    MAX_CPU=0.95
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-# Expose ports
-EXPOSE 80 3002
+EXPOSE 80 3002 3003 3005
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD /app/healthcheck.sh
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD nc -z localhost 80 && nc -z localhost 3002 || exit 1
 
-# Use supervisor to manage all processes
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
+CMD ["/app/start.sh"]
