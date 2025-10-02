@@ -50,7 +50,7 @@ services:
       - NODE_ENV=production
       - PORT=3002
       - HOST=0.0.0.0
-      - USE_DB_AUTHENTICATION=false
+      #- USE_DB_AUTHENTICATION=true
       
       # Redis Configuration
       - REDIS_URL=redis://redis:6379
