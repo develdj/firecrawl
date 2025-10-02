@@ -43,8 +43,7 @@ RUN pnpm run build
 
 # Prepare HTML playground
 RUN mkdir -p /var/www/html
-COPY /docker/playground.html /var/www/html/index.html 2>/dev/null || \
-    echo '<!DOCTYPE html><html><head><title>Firecrawl</title></head><body><h1>Firecrawl API</h1><p>Access the API at <a href="/v1/">/v1/</a></p></body></html>' > /var/www/html/index.html
+COPY docker/playground.html /var/www/html/index.html
 
 # Create logs directory
 RUN mkdir -p /app/logs
