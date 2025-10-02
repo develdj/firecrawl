@@ -42,7 +42,7 @@ services:
       - MODEL_EMBEDDING_NAME=nomic-embed-text:v1.5
       
       # Bull Queue Authentication
-      - BULL_AUTH_KEY=${BULL_AUTH_KEY:-CHANGEME}
+      - BULL_AUTH_KEY=${BULL_AUTH_KEY:-your-secure-password}
       
       # Browser Configuration
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
@@ -52,16 +52,10 @@ services:
       - MAX_RAM=0.75
       - NODE_OPTIONS=--max-old-space-size=4096
       
-      # Optional: SearXNG Integration
-      # - SEARXNG_ENDPOINT=http://searxng-n8ggwkkkcgw8og0wwcc8coow:8080
-      
-      # Optional: LlamaParse for PDF parsing
-      # - LLAMAPARSE_API_KEY=your_key_here
-      
-      # Optional: Proxy Configuration
-      # - PROXY_SERVER=
-      # - PROXY_USERNAME=
-      # - PROXY_PASSWORD=
+      # SearXNG Integration
+      - SEARXNG_ENDPOINT=http://192.168.1.81:8888
+      - SEARXNG_ENGINES=google,bing,duckduckgo
+      - SEARXNG_CATEGORIES=general
       
     volumes:
       - ./logs:/app/logs
@@ -72,14 +66,13 @@ services:
       redis:
         condition: service_healthy
     extra_hosts:
-      # This allows container to access host services (Ollama)
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "3002"]
+      test: ["CMD", "nc", "-z", "localhost", "80"]
       interval: 30s
       timeout: 10s
-      start_period: 90s
+      start_period: 120s
       retries: 3
 
 networks:
