@@ -66,91 +66,114 @@ set -e
 
 echo "Starting Firecrawl services..."
 
-# Auto-detect DATABASE_URL if not set
+# Check if DATABASE_URL is set, if not construct it from DB_ variables
 if [ -z "$DATABASE_URL" ]; then
-    echo "DATABASE_URL not set, attempting auto-detection..."
+    echo "DATABASE_URL not set, constructing from DB_ variables..."
     
-    # Try to find postgres container in the same network
-    POSTGRES_HOST=""
-    
-    # Check common Coolify postgres container names
-    for name in postgres postgres-swk4w8gkc0kwogccc8gw0k48 postgresql; do
-        if getent hosts $name > /dev/null 2>&1; then
-            POSTGRES_HOST=$name
-            echo "Found PostgreSQL at: $POSTGRES_HOST"
-            break
+    # Use DB_ environment variables if they exist
+    if [ -n "$DB_HOST" ] && [ -n "$DB_USER" ] && [ -n "$DB_PASSWORD" ] && [ -n "$DB_NAME" ]; then
+        DB_PORT=${DB_PORT:-5432}
+        export DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+        echo "Constructed DATABASE_URL from DB_ variables"
+    else
+        # Fallback to auto-detection
+        echo "DB_ variables not found, attempting auto-detection..."
+        
+        POSTGRES_HOST=""
+        
+        # Check common postgres container names
+        for name in postgres postgres-swk4w8gkc0kwogccc8gw0k48-081110613209 postgresql; do
+            if getent hosts $name > /dev/null 2>&1; then
+                POSTGRES_HOST=$name
+                echo "Found PostgreSQL at: $POSTGRES_HOST"
+                break
+            fi
+        done
+        
+        # Default if not found
+        if [ -z "$POSTGRES_HOST" ]; then
+            POSTGRES_HOST="10.0.7.2"
+            echo "Using fallback PostgreSQL host: $POSTGRES_HOST"
         fi
-    done
-    
-    # If not found by name, try the IP from environment
-    if [ -z "$POSTGRES_HOST" ] && [ -n "$SERVICE_URL_POSTGRES" ]; then
-        POSTGRES_HOST=$(echo $SERVICE_URL_POSTGRES | sed 's/.*:\/\///' | cut -d: -f1)
+        
+        export DATABASE_URL="postgresql://firecrawl:firecrawl_password@${POSTGRES_HOST}:5432/firecrawl"
     fi
-    
-    # Default to common settings
-    if [ -z "$POSTGRES_HOST" ]; then
-        POSTGRES_HOST="10.0.7.2"
-        echo "Using fallback PostgreSQL host: $POSTGRES_HOST"
-    fi
-    
-    export DATABASE_URL="postgresql://firecrawl:firecrawl_password@${POSTGRES_HOST}:5432/firecrawl"
-    echo "Set DATABASE_URL to: postgresql://firecrawl:***@${POSTGRES_HOST}:5432/firecrawl"
 fi
 
-# Test database connection
-echo "Testing database connection..."
-until PGPASSWORD=firecrawl_password psql -h "$(echo $DATABASE_URL | sed 's/.*@//' | cut -d: -f1)" -U firecrawl -d firecrawl -c "SELECT 1" > /dev/null 2>&1; do
-    echo "Waiting for database to be ready..."
-    sleep 2
-done
-echo "Database connection successful!"
+echo "Using DATABASE_URL: ${DATABASE_URL//:*@//:***@}"
 
-# Start nginx in background
-nginx -g "daemon off;" &
+# Test database connection with better error handling
+echo "Testing database connection..."
+DB_HOST=$(echo $DATABASE_URL | sed 's/.*@//' | cut -d: -f1)
+DB_PORT=$(echo $DATABASE_URL | sed 's/.*@//' | cut -d: -f2 | cut -d/ -f1)
+DB_USER=$(echo $DATABASE_URL | sed 's/.*:\/\///' | cut -d: -f1)
+DB_PASSWORD=$(echo $DATABASE_URL | sed 's/.*:\/\///' | cut -d: -f2 | cut -d@ -f1)
+DB_NAME=$(echo $DATABASE_URL | sed 's/.*\///')
+
+echo "Connecting to PostgreSQL at ${DB_HOST}:${DB_PORT} as user ${DB_USER}"
+
+for i in {1..30}; do
+    if PGPASSWORD=$DB_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" > /dev/null 2>&1; then
+        echo "Database connection successful!"
+        break
+    else
+        if [ $i -eq 30 ]; then
+            echo "Failed to connect to database after 30 attempts"
+            echo "Connection details: host=$DB_HOST port=$DB_PORT user=$DB_USER database=$DB_NAME"
+            exit 1
+        fi
+        echo "Waiting for database to be ready... (attempt $i/30)"
+        sleep 2
+    fi
+done
 
 # Wait for Redis
 echo "Waiting for Redis..."
 REDIS_HOST=$(echo ${REDIS_URL:-redis://redis:6379} | sed 's/redis:\/\///' | cut -d: -f1)
-REDIS_PORT=$(echo ${REDIS_URL:-redis://redis:6379} | sed 's/redis:\/\///' | cut -d: -f2 | cut -d/ -f1)
-until redis-cli -h ${REDIS_HOST} -p ${REDIS_PORT} ping 2>/dev/null; do 
-    echo "Redis not ready, waiting..."
-    sleep 2
+REDIS_PORT=$(echo ${REDIS_URL:-redis://redis:6379} | sed 's/.*://' | cut -d/ -f1)
+
+for i in {1..30}; do
+    if redis-cli -h ${REDIS_HOST} -p ${REDIS_PORT} ping 2>/dev/null; do
+        echo "Redis connected"
+        break
+    else
+        if [ $i -eq 30 ]; then
+            echo "Failed to connect to Redis after 30 attempts"
+            exit 1
+        fi
+        echo "Redis not ready, waiting... (attempt $i/30)"
+        sleep 2
+    fi
 done
-echo "Redis connected"
 
 cd /app/firecrawl/apps/api
 
-# Start API server
-echo "Starting API server..."
-NODE_ENV=production \
-  PORT=3002 \
-  HOST=0.0.0.0 \
-  DATABASE_URL="${DATABASE_URL}" \
-  REDIS_URL="${REDIS_URL:-redis://redis:6379}" \
-  REDIS_RATE_LIMIT_URL="${REDIS_RATE_LIMIT_URL:-redis://redis:6379}" \
-  BULL_AUTH_KEY="${BULL_AUTH_KEY:-your-secure-password}" \
-  USE_DB_AUTHENTICATION="${USE_DB_AUTHENTICATION:-false}" \
-  OLLAMA_BASE_URL="${OLLAMA_BASE_URL}" \
-  MODEL_NAME="${MODEL_NAME:-gpt-oss:20b}" \
-  MODEL_EMBEDDING_NAME="${MODEL_EMBEDDING_NAME:-nomic-embed-text:v1.5}" \
-  SEARXNG_ENDPOINT="${SEARXNG_ENDPOINT}" \
-  SEARXNG_ENGINES="${SEARXNG_ENGINES}" \
-  SEARXNG_CATEGORIES="${SEARXNG_CATEGORIES}" \
-  PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-  node dist/src/index.js > /app/logs/api.log 2>&1 &
+# Export all environment variables for the Node processes
+export NODE_ENV="${NODE_ENV:-production}"
+export PORT="${PORT:-3002}"
+export HOST="${HOST:-0.0.0.0}"
+export REDIS_URL="${REDIS_URL:-redis://redis:6379}"
+export REDIS_RATE_LIMIT_URL="${REDIS_RATE_LIMIT_URL:-redis://redis:6379}"
+export BULL_AUTH_KEY="${BULL_AUTH_KEY:-your-secure-password}"
+export USE_DB_AUTHENTICATION="${USE_DB_AUTHENTICATION:-false}"
+export PUPPETEER_EXECUTABLE_PATH="${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium-browser}"
 
+# Start API server
+echo "Starting API server with DATABASE_URL=${DATABASE_URL//:*@//:***@}"
+node dist/src/index.js > /app/logs/api.log 2>&1 &
 API_PID=$!
 
 # Wait for API to be ready
-echo "Waiting for API..."
+echo "Waiting for API to start..."
 for i in {1..60}; do
     if nc -z localhost 3002; then
-        echo "API ready"
+        echo "API ready on port 3002"
         break
     fi
     if [ $i -eq 60 ]; then
-        echo "API failed to start"
-        cat /app/logs/api.log
+        echo "API failed to start after 60 seconds"
+        echo "Last 50 lines of API log:"
+        tail -50 /app/logs/api.log
         exit 1
     fi
     sleep 2
@@ -158,44 +181,28 @@ done
 
 # Start worker process
 echo "Starting worker process..."
-NODE_ENV=production \
-  IS_WORKER_PROCESS=true \
-  PORT=3005 \
-  DATABASE_URL="${DATABASE_URL}" \
-  REDIS_URL="${REDIS_URL:-redis://redis:6379}" \
-  REDIS_RATE_LIMIT_URL="${REDIS_RATE_LIMIT_URL:-redis://redis:6379}" \
-  BULL_AUTH_KEY="${BULL_AUTH_KEY:-your-secure-password}" \
-  USE_DB_AUTHENTICATION="${USE_DB_AUTHENTICATION:-false}" \
-  OLLAMA_BASE_URL="${OLLAMA_BASE_URL}" \
-  MODEL_NAME="${MODEL_NAME:-gpt-oss:20b}" \
-  MODEL_EMBEDDING_NAME="${MODEL_EMBEDDING_NAME:-nomic-embed-text:v1.5}" \
-  SEARXNG_ENDPOINT="${SEARXNG_ENDPOINT}" \
-  SEARXNG_ENGINES="${SEARXNG_ENGINES}" \
-  SEARXNG_CATEGORIES="${SEARXNG_CATEGORIES}" \
-  PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-  node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
-
+IS_WORKER_PROCESS=true node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
 WORKER_PID=$!
 
 echo "All services started successfully"
 echo "API PID: $API_PID"
 echo "Worker PID: $WORKER_PID"
+echo "Nginx serving on port 80"
 
 # Monitor processes
 while true; do
     if ! kill -0 $API_PID 2>/dev/null; then
-        echo "API process died!"
-        cat /app/logs/api.log
+        echo "API process died! Last log entries:"
+        tail -20 /app/logs/api.log
         exit 1
     fi
     if ! kill -0 $WORKER_PID 2>/dev/null; then
-        echo "Worker process died!"
-        cat /app/logs/worker.log
+        echo "Worker process died! Last log entries:"
+        tail -20 /app/logs/worker.log
         exit 1
     fi
     sleep 10
 done
-EOF
 
 RUN chmod +x /app/start.sh
 
