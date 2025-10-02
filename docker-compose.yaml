@@ -91,7 +91,7 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "80"]
+      test: ["CMD", "nc", "-z", "localhost", "3002"]
       interval: 30s
       timeout: 10s
       start_period: 120s
