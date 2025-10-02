@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git build-essential python3 g++ make \
+    curl git build-essential python3 make g++ libpq-dev \
     chromium-browser wget gnupg ca-certificates fonts-liberation \
     redis-tools nginx netcat-openbsd libatk-bridge2.0-0 libatk1.0-0 \
     libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 \
