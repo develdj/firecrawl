@@ -3,11 +3,11 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 WORKDIR /app
 
 # ----------------------------------------------------------
-# Install system dependencies (excluding chromium-browser)
+# Install system dependencies and Chromium
 # ----------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git build-essential python3 make g++ libpq-dev \
-    wget gnupg ca-certificates fonts-liberation snapd \
+    wget gnupg ca-certificates fonts-liberation \
     redis-tools nginx netcat-openbsd libatk-bridge2.0-0 libatk1.0-0 \
     libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 \
     libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
@@ -16,18 +16,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lsb-release xdg-utils postgresql-client psmisc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Chromium manually (avoiding snap issues in Docker)
-RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_aarch64.deb && \
-    apt-get update && \
-    apt-get install -y ./google-chrome-stable_current_aarch64.deb || \
-    (apt-get update && apt-get install -y chromium) && \
-    rm -f google-chrome-stable_current_aarch64.deb && \
+# Install Chromium using apt directly (not snap)
+RUN apt-get update && \
+    apt-get install -y chromium && \
     rm -rf /var/lib/apt/lists/*
 
-# Find and set Chromium path
-RUN CHROME_PATH=$(which google-chrome-stable 2>/dev/null || which chromium 2>/dev/null || which chromium-browser 2>/dev/null || echo "/usr/bin/chromium") && \
+# Create symlink for consistent path
+RUN CHROME_PATH=$(which chromium 2>/dev/null || which chromium-browser 2>/dev/null || echo "/usr/bin/chromium") && \
     echo "Chromium found at: $CHROME_PATH" && \
-    ln -sf $CHROME_PATH /usr/bin/chromium-executable
+    ln -sf $CHROME_PATH /usr/bin/chromium-executable && \
+    $CHROME_PATH --version || echo "Chromium installation verification failed"
 
 # ----------------------------------------------------------
 # Install Node.js 20
@@ -74,10 +72,46 @@ RUN if grep -q "app.listen" dist/src/services/queue-worker.js; then \
     sed -i 's/app\.listen(PORT/app.listen(process.env.WORKER_PORT || 3005/' dist/src/services/queue-worker.js || true; \
     fi
 
-# Patch any hardcoded localhost database connections
-RUN find dist -type f -name "*.js" -exec grep -l "127.0.0.1:5432" {} \; | while read file; do \
+# ----------------------------------------------------------
+# Create database configuration override
+# ----------------------------------------------------------
+RUN cat > /app/firecrawl/apps/api/db-config-override.js << 'EOF'
+// Override database configuration to use environment variables
+const originalPg = require('pg');
+const originalPool = originalPg.Pool;
+
+// Wrap Pool constructor to force postgres hostname
+originalPg.Pool = function(config) {
+    if (config) {
+        // Override any localhost references
+        if (config.host === 'localhost' || config.host === '127.0.0.1') {
+            config.host = 'postgres';
+        }
+        // Also check connection string
+        if (config.connectionString && config.connectionString.includes('127.0.0.1')) {
+            config.connectionString = config.connectionString.replace('127.0.0.1', 'postgres');
+        }
+    }
+    return new originalPool(config);
+};
+
+// Copy over any prototype methods
+Object.setPrototypeOf(originalPg.Pool, originalPool);
+originalPg.Pool.prototype = originalPool.prototype;
+EOF
+
+# Inject the override into the main entry point
+RUN sed -i '1i require("./db-config-override.js");' /app/firecrawl/apps/api/dist/src/index.js
+RUN sed -i '1i require("../../db-config-override.js");' /app/firecrawl/apps/api/dist/src/services/queue-worker.js
+
+# Also patch the compiled JavaScript files directly as fallback
+RUN find /app/firecrawl/apps/api/dist -type f -name "*.js" -exec grep -l "127\.0\.0\.1.*5432\|localhost.*5432" {} \; | while read file; do \
     echo "Patching $file"; \
     sed -i 's/127\.0\.0\.1:5432/postgres:5432/g' "$file"; \
+    sed -i 's/"127\.0\.0\.1"/"postgres"/g' "$file"; \
+    sed -i "s/'127\.0\.0\.1'/'postgres'/g" "$file"; \
+    sed -i 's/"localhost"/"postgres"/g' "$file"; \
+    sed -i "s/'localhost'/'postgres'/g" "$file"; \
     done
 
 ENV NODE_ENV=production
