@@ -69,6 +69,15 @@ COPY docker/playground.html /var/www/html/index.html
 RUN mkdir -p /app/logs
 
 # ----------------------------------------------------------
+# Create worker wrapper script
+# ----------------------------------------------------------
+RUN cat > /app/firecrawl/apps/api/worker-only.js << 'EOF'
+// Worker-only entry point that doesn't start HTTP server
+process.env.WORKER_ONLY = 'true';
+require('./dist/src/services/queue-worker.js');
+EOF
+
+# ----------------------------------------------------------
 # Create startup script with proper cleanup
 # ----------------------------------------------------------
 RUN cat > /app/start.sh << 'EOF'
@@ -134,14 +143,35 @@ node dist/src/index.js > /app/logs/api.log 2>&1 &
 API_PID=$!
 echo "API PID: $API_PID"
 
-# Wait a bit for API to start
+# Wait for API to start
 sleep 5
 
-# Start worker
+# Check if API is actually running
+if ! kill -0 $API_PID 2>/dev/null; then
+    echo "API failed to start!"
+    cat /app/logs/api.log
+    exit 1
+fi
+
+echo "API started successfully"
+
+# Start worker - use the wrapper script
 echo "Starting worker..."
-IS_WORKER_PROCESS=true node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
+node worker-only.js > /app/logs/worker.log 2>&1 &
 WORKER_PID=$!
 echo "Worker PID: $WORKER_PID"
+
+# Wait a bit for worker to start
+sleep 3
+
+# Check if worker is actually running
+if ! kill -0 $WORKER_PID 2>/dev/null; then
+    echo "Worker failed to start!"
+    cat /app/logs/worker.log
+    exit 1
+fi
+
+echo "Worker started successfully"
 
 # Cleanup function
 cleanup() {
@@ -155,6 +185,7 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # Keep alive and monitor processes
+echo "All services running. Monitoring..."
 while true; do
     if ! kill -0 $API_PID 2>/dev/null; then
         echo "API process died!"
@@ -195,8 +226,9 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;
-        proxy_connect_timeout 120s;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 300s;
+        proxy_send_timeout 300s;
     }
 
     location /admin/ {
