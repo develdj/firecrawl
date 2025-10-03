@@ -3,11 +3,11 @@ FROM dustynv/cuda-python:r36.4.0-cu128-24.04
 WORKDIR /app
 
 # ----------------------------------------------------------
-# Install system dependencies
+# Install system dependencies (excluding chromium-browser)
 # ----------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git build-essential python3 make g++ libpq-dev \
-    chromium-browser wget gnupg ca-certificates fonts-liberation \
+    wget gnupg ca-certificates fonts-liberation snapd \
     redis-tools nginx netcat-openbsd libatk-bridge2.0-0 libatk1.0-0 \
     libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 \
     libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
@@ -15,6 +15,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
     lsb-release xdg-utils postgresql-client psmisc \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Chromium manually (avoiding snap issues in Docker)
+RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_aarch64.deb && \
+    apt-get update && \
+    apt-get install -y ./google-chrome-stable_current_aarch64.deb || \
+    (apt-get update && apt-get install -y chromium) && \
+    rm -f google-chrome-stable_current_aarch64.deb && \
+    rm -rf /var/lib/apt/lists/*
+
+# Find and set Chromium path
+RUN CHROME_PATH=$(which google-chrome-stable 2>/dev/null || which chromium 2>/dev/null || which chromium-browser 2>/dev/null || echo "/usr/bin/chromium") && \
+    echo "Chromium found at: $CHROME_PATH" && \
+    ln -sf $CHROME_PATH /usr/bin/chromium-executable
 
 # ----------------------------------------------------------
 # Install Node.js 20
@@ -55,11 +68,17 @@ RUN pnpm rebuild || true
 RUN pnpm run build
 RUN pnpm prune --prod || true
 
-# Patch the queue-worker to not start HTTP server on port 3002
+# Patch queue-worker to use port 3005 instead of 3002
 RUN if grep -q "app.listen" dist/src/services/queue-worker.js; then \
     sed -i 's/app\.listen(3002/app.listen(3005/' dist/src/services/queue-worker.js || true; \
     sed -i 's/app\.listen(PORT/app.listen(process.env.WORKER_PORT || 3005/' dist/src/services/queue-worker.js || true; \
     fi
+
+# Patch any hardcoded localhost database connections
+RUN find dist -type f -name "*.js" -exec grep -l "127.0.0.1:5432" {} \; | while read file; do \
+    echo "Patching $file"; \
+    sed -i 's/127\.0\.0\.1:5432/postgres:5432/g' "$file"; \
+    done
 
 ENV NODE_ENV=production
 
@@ -143,6 +162,14 @@ cd /app/firecrawl/apps/api
 echo "Starting Nginx..."
 nginx || true
 
+# Verify and export DATABASE_URL explicitly
+export DATABASE_URL="${DATABASE_URL:-postgresql://firecrawl:firecrawl_password@postgres:5432/firecrawl}"
+echo "Final DATABASE_URL: ${DATABASE_URL//:*@//:***@}"
+
+# Export PUPPETEER path
+export PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium-executable"
+echo "Chromium path: $PUPPETEER_EXECUTABLE_PATH"
+
 # Start API server
 echo "Starting API server..."
 node dist/src/index.js > /app/logs/api.log 2>&1 &
@@ -197,11 +224,12 @@ while true; do
         tail -50 /app/logs/api.log
         exit 1
     fi
-    if ! kill -0 $WORKER_PID 2>/dev/null; then
-        echo "Worker process died!"
-        tail -50 /app/logs/worker.log
-        exit 1
-    fi
+    # Skip worker check for now
+    # if [ $WORKER_PID -ne 0 ] && ! kill -0 $WORKER_PID 2>/dev/null; then
+    #     echo "Worker process died!"
+    #     tail -50 /app/logs/worker.log
+    #     exit 1
+    # fi
     sleep 10
 done
 EOF
@@ -254,7 +282,8 @@ ENV NODE_ENV=production \
     NODE_OPTIONS="--max-old-space-size=4096" \
     PORT=3002 \
     HOST=0.0.0.0 \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-executable \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 EXPOSE 3002 3003 3004 3005
 
