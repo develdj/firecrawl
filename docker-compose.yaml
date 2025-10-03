@@ -43,7 +43,7 @@ services:
     ports:
       - "3002:3002"  # API
       - "3003:3003"  # Bull Dashboard
-      - "3004:3004"  # Playground UI (changed from 3004:80)
+      - "3004:3004"  # Playground UI
       - "3005:3005"  # Worker metrics
     environment:
       # Core Configuration
@@ -52,12 +52,19 @@ services:
       - HOST=0.0.0.0
       - USE_DB_AUTHENTICATION=false
       
-      # Database Configuration
+      # Database Configuration - CRITICAL: Use postgres hostname, not localhost
       - DATABASE_URL=postgresql://firecrawl:firecrawl_password@postgres:5432/firecrawl
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=firecrawl
+      - POSTGRES_PASSWORD=firecrawl_password
+      - POSTGRES_DB=firecrawl
     
       # Redis Configuration
       - REDIS_URL=redis://redis:6379
       - REDIS_RATE_LIMIT_URL=redis://redis:6379
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       
       # Ollama AI Configuration
       - OLLAMA_BASE_URL=http://192.168.1.81:11434/api
@@ -68,7 +75,8 @@ services:
       - BULL_AUTH_KEY=${BULL_AUTH_KEY:-your-secure-password}
       
       # Browser Configuration
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-executable
+      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
       
       # Resource Limits (Jetson Optimized)
       - MAX_CPU=0.75
