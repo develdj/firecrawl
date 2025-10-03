@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
     libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
-    lsb-release xdg-utils postgresql-client \
+    lsb-release xdg-utils postgresql-client psmisc \
     && rm -rf /var/lib/apt/lists/*
 
 # ----------------------------------------------------------
@@ -69,13 +69,19 @@ COPY docker/playground.html /var/www/html/index.html
 RUN mkdir -p /app/logs
 
 # ----------------------------------------------------------
-# Create startup script
+# Create startup script with proper cleanup
 # ----------------------------------------------------------
 RUN cat > /app/start.sh << 'EOF'
 #!/bin/bash
 set -e
 
 echo "Starting Firecrawl services..."
+
+# Kill any existing processes on ports
+echo "Cleaning up existing processes..."
+fuser -k 3002/tcp 2>/dev/null || true
+fuser -k 3004/tcp 2>/dev/null || true
+sleep 2
 
 # Auto-generate DATABASE_URL if not provided
 if [ -z "$DATABASE_URL" ]; then
@@ -118,26 +124,46 @@ done
 
 cd /app/firecrawl/apps/api
 
+# Start Nginx for playground
+echo "Starting Nginx..."
+nginx || true
+
 # Start API server
 echo "Starting API server..."
 node dist/src/index.js > /app/logs/api.log 2>&1 &
 API_PID=$!
+echo "API PID: $API_PID"
+
+# Wait a bit for API to start
+sleep 5
 
 # Start worker
 echo "Starting worker..."
 IS_WORKER_PROCESS=true node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
 WORKER_PID=$!
+echo "Worker PID: $WORKER_PID"
 
-# Keep alive
+# Cleanup function
+cleanup() {
+    echo "Shutting down services..."
+    kill $API_PID 2>/dev/null || true
+    kill $WORKER_PID 2>/dev/null || true
+    nginx -s stop 2>/dev/null || true
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT
+
+# Keep alive and monitor processes
 while true; do
     if ! kill -0 $API_PID 2>/dev/null; then
         echo "API process died!"
-        tail -20 /app/logs/api.log
+        tail -50 /app/logs/api.log
         exit 1
     fi
     if ! kill -0 $WORKER_PID 2>/dev/null; then
         echo "Worker process died!"
-        tail -20 /app/logs/worker.log
+        tail -50 /app/logs/worker.log
         exit 1
     fi
     sleep 10
@@ -149,10 +175,10 @@ RUN chmod +x /app/start.sh
 # ----------------------------------------------------------
 # Configure Nginx for Playground on port 3004
 # ----------------------------------------------------------
-RUN sed -i 's/listen 80;/listen 3004;/' /etc/nginx/sites-available/default
 RUN cat > /etc/nginx/sites-available/default << 'EOF'
 server {
     listen 3004;
+    server_name _;
     root /var/www/html;
     client_max_body_size 50M;
 
@@ -169,6 +195,8 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_connect_timeout 120s;
     }
 
     location /admin/ {
