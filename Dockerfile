@@ -55,6 +55,12 @@ RUN pnpm rebuild || true
 RUN pnpm run build
 RUN pnpm prune --prod || true
 
+# Patch the queue-worker to not start HTTP server on port 3002
+RUN if grep -q "app.listen" dist/src/services/queue-worker.js; then \
+    sed -i 's/app\.listen(3002/app.listen(3005/' dist/src/services/queue-worker.js || true; \
+    sed -i 's/app\.listen(PORT/app.listen(process.env.WORKER_PORT || 3005/' dist/src/services/queue-worker.js || true; \
+    fi
+
 ENV NODE_ENV=production
 
 # ----------------------------------------------------------
@@ -155,23 +161,22 @@ fi
 
 echo "API started successfully"
 
-# Start worker - use the wrapper script
-echo "Starting worker..."
-node worker-only.js > /app/logs/worker.log 2>&1 &
-WORKER_PID=$!
-echo "Worker PID: $WORKER_PID"
+# TEMPORARY: Skip worker startup to test if API works
+echo "Skipping worker startup for now (testing API only)"
+WORKER_PID=0
 
-# Wait a bit for worker to start
-sleep 3
-
-# Check if worker is actually running
-if ! kill -0 $WORKER_PID 2>/dev/null; then
-    echo "Worker failed to start!"
-    cat /app/logs/worker.log
-    exit 1
-fi
-
-echo "Worker started successfully"
+# Uncomment these lines once API is confirmed working:
+# echo "Starting worker..."
+# WORKER_PORT=3005 node dist/src/services/queue-worker.js > /app/logs/worker.log 2>&1 &
+# WORKER_PID=$!
+# echo "Worker PID: $WORKER_PID"
+# sleep 3
+# if ! kill -0 $WORKER_PID 2>/dev/null; then
+#     echo "Worker failed to start!"
+#     cat /app/logs/worker.log
+#     exit 1
+# fi
+# echo "Worker started successfully"
 
 # Cleanup function
 cleanup() {
