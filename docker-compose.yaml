@@ -39,11 +39,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: firecrawl-app
     ports:
       - "3002:3002"  # API
       - "3003:3003"  # Bull Dashboard
-      - "3004:80"    # Playground UI
+      - "3004:3004"  # Change from "3004:80" to "3004:3004"
       - "3005:3005"  # Worker
     environment:
       # Core Configuration
