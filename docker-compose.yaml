@@ -3,7 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: firecrawl-postgres
+    container_name: postgres-firecrawl
     ports:
       - "5432:5432" 
     environment:
@@ -23,7 +23,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: firecrawl-redis
+    container_name: redis-firecrawl
     networks:
       - firecrawl-network
     volumes:
@@ -39,18 +39,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: firecrawl-app
     ports:
       - "3002:3002"  # API
       - "3003:3003"  # Bull Dashboard
-      - "3004:3004"  # Change from "3004:80" to "3004:3004"
-      - "3005:3005"  # Worker
+      - "3004:3004"  # Playground UI (changed from 3004:80)
+      - "3005:3005"  # Worker metrics
     environment:
       # Core Configuration
       - NODE_ENV=production
       - PORT=3002
       - HOST=0.0.0.0
-      #- USE_DB_AUTHENTICATION=true
-      # Database Configuration - ADD THIS
+      - USE_DB_AUTHENTICATION=false
+      
+      # Database Configuration
       - DATABASE_URL=postgresql://firecrawl:firecrawl_password@postgres:5432/firecrawl
     
       # Redis Configuration
@@ -84,6 +86,8 @@ services:
     networks:
       - firecrawl-network
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     extra_hosts:
@@ -102,4 +106,6 @@ networks:
 
 volumes:
   redis-data:
+    driver: local
+  postgres-data:
     driver: local
